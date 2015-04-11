@@ -2,7 +2,7 @@
 a CESK machine for JS
 
 
-[https://github.com/toshok/echojs](EJS) needs a static analysis
+[toshok/echojs](https://github.com/toshok/echojs) needs a static analysis
 framework to enable things like:
 
 * lightweight closure conversion
