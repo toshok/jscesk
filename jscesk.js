@@ -17,6 +17,74 @@ function debug(msg) {
 // Kontinuation: a stack used to match return statements to the call, as well as throw statements to handlers.
 //
 
+// concrete values
+
+class CVal {
+    constructor(val) {
+        this._val = val;
+    }
+    get value() { return this._val; }
+    toString() { return `CVal(${this.value})`; }
+}
+
+let _cbool_false;
+let _cbool_true;
+
+class CBool extends CVal {
+    constructor(val) {
+        super(val);
+    }
+
+    static get False() { return _cbool_false; }
+    static get True() { return _cbool_true; }
+    toString() { return `CBool(${this.value})`; }
+}
+
+_cbool_false = new CBool(false);
+_cbool_true = new CBool(true);
+
+class CObject extends CVal {
+    constructor(proto) {
+        super(Object.create(proto ? proto.value : null));
+        this._proto = proto;
+    }
+    get proto() { return this._proto; }
+    set(key, value) {
+        unimplemented("CObject.set");
+    }
+    get(key) {
+        unimplemented("CObject.get");
+    }
+    toString() { return `CObject`; }
+}
+
+class CArray extends CObject {
+    constructor(val) {
+        super(val);
+    }
+    toString() { return `CArray`; }
+}
+
+class CNum extends CVal {
+    constructor(num) { super(num); }
+    toString() { return `CNum(${this.value})`; }
+}
+
+class CStr extends CVal {
+    constructor(str) { super(str); }
+    toString() { return `CStr(${this.value})`; }
+}
+
+class CBuiltinFunc extends CVal {
+    constructor(arity, fun) {
+        super(fun);
+        this._arity = arity;
+    }
+    toString() { return `CBuiltinFunc(${this._arity}, ${this.value})`; }
+}
+    
+
+
 function unimplemented(msg) {
     print(`unimplemented functionality: ${msg}`);
     throw new Error(msg);
@@ -46,8 +114,9 @@ function ToBoolean(val) {
     else if (val.value === null) { return CBool.False; }
     else if (val instanceof CNum) { return (isNaN(val.value) || val.value === 0) ? CBool.True : CBool.False; }
     else if (val instanceof CStr) { return val.value === "" ? CBool.True : CBool.False; }
+    else if (val instanceof CObject) return CBool.True;
     else
-        // XXX Symbol and Object bool convert to true
+        // XXX Symbol converts to true
         return CBool.True;
     return unimplemented("ToBoolean");
 }
@@ -93,7 +162,6 @@ function AbstractRelationalComparison(x, y, leftFirst) {
         // c. Let ny be ToNumber(py).
         let nx = ToNumber(px);
         let ny = ToNumber(py);
-
 
         // e. If nx is NaN, return undefined.
         if (isNaN(nx.value)) return new CVal(undefined);
@@ -259,45 +327,6 @@ class Store {
         return rv;
     }
 }
-
-// concrete values
-
-class CVal {
-    constructor(val) {
-        this._val = val;
-    }
-    get value() { return this._val; }
-    toString() { return `CVal(${this.value})`; }
-}
-
-class CBool extends CVal {
-    constructor(val) {
-        super(val);
-    }
-
-    static get False() { return new CBool(false); }
-    static get True() { return new CBool(true); }
-    toString() { return `CBool(${this.value})`; }
-}
-
-class CNum extends CVal {
-    constructor(num) { super(num); }
-    toString() { return `CNum(${this.value})`; }
-}
-
-class CStr extends CVal {
-    constructor(str) { super(str); }
-    toString() { return `CStr(${this.value})`; }
-}
-
-class CBuiltinFunc extends CVal {
-    constructor(arity, fun) {
-        super(fun);
-        this._arity = arity;
-    }
-    toString() { return `CBuiltinFunc(${this._arity}, ${this.value})`; }
-}
-    
 
 // continuations
 
@@ -680,6 +709,30 @@ class CESKCallExpression extends CESKExpression {
     }
 }
 
+class CESKObjectExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._properties = astnode.properties.map(wrap);
+    }
+    get properties() { return this._properties; }
+    eval(fp, store, kont) {
+        let rv = new CObject(store.get(fp.getOffset("%ObjectPrototype%")));
+        // XXX properties
+        return rv;
+    }
+}
+
+class CESKArrayExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._elements = astnode.elements.map(wrap);
+    }
+    get elements() { return this._elements; }
+    eval(fp, store, kont) {
+        unimplemented("CESKArrayExpression.eval");
+    }
+}
+
 class CESKIf extends CESKStatement {
     constructor(astnode) {
         super(astnode);
@@ -746,7 +799,7 @@ class CESKDone extends CESKStatement {
 
 function wrap(astnode) {
     switch(astnode.type) {
-    case b.ArrayExpression: return unimplemented('ArrayExpression');
+    case b.ArrayExpression: return new CESKArrayExpression(astnode);
     case b.ArrayPattern: return unimplemented('ArrayPattern');
     case b.ArrowFunctionExpression: return unimplemented('ArrowFunctionExpression');
     case b.AssignmentExpression: return new CESKAssignmentExpression(astnode);
@@ -787,7 +840,7 @@ function wrap(astnode) {
     case b.MethodDefinition: return unimplemented('MethodDefinition');
     case b.ModuleDeclaration: return unimplemented('ModuleDeclaration');
     case b.NewExpression: return unimplemented('NewExpression');
-    case b.ObjectExpression: return unimplemented('ObjectExpression');
+    case b.ObjectExpression: return new CESKObjectExpression(astnode);
     case b.ObjectPattern: return unimplemented('ObjectPattern');
     case b.Program: return new CESKProgram(astnode);
     case b.Property: return unimplemented('Property');
@@ -862,6 +915,11 @@ function assignNext(stmt, next) {
     }
 }
 
+function initES6Env(fp0, store0) {
+    store0 = Store.extend(store0, fp0.offset("print"), new CBuiltinFunc(1, function print(x) { console.log(x); }));
+    store0 = Store.extend(store0, fp0.offset("%ObjectPrototype%"), new CObject(null));
+    return store0;
+}
 
 function execute(toplevel) {
     // allocate an initial frame pointer
@@ -870,7 +928,7 @@ function execute(toplevel) {
     // create an initial store
     let store0 = new Store();
 
-    store0 = Store.extend(store0, fp0.offset("print"), new CBuiltinFunc(1, function print(x) { console.log(x); }));
+    store0 = initES6Env(fp0, store0);
 
     // get the Halt continuation
     let halt = new HaltKont();
@@ -885,19 +943,20 @@ function execute(toplevel) {
 }
 
 
-function runcesk(program_text) {
+function runcesk(name, program_text) {
     var test = esprima.parse(program_text);
     var cesktest = wrap(test);
     assignNext(cesktest, new CESKDone());
     cesktest = toANF(cesktest);
-    debug(cesktest.type);
+    console.time(name);
     execute(cesktest);
+    console.timeEnd(name);
 }
 
-runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
-runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
-runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let z = 0; while (z < y) { let unused = print(z); z = z + 1; }");
-runcesk(`
+runcesk("func-call", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
+runcesk("if1", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
+runcesk("loop1", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let z = 0; while (z < y) { let unused = print(z); z = z + 1; }");
+runcesk("rfib", `
 function fib(n) {
     if (n === 0) return 1;
     if (n === 1) return 1;
@@ -912,7 +971,7 @@ function fib(n) {
 let fib8 = fib(8);
 let unused = print(fib8);
 `);
-runcesk(`
+runcesk("ifib", `
 function fib(n) {
     if (n < 2) return 1;
     n = n - 2;
@@ -929,4 +988,7 @@ function fib(n) {
 }
 let fib8 = fib(8);
 let unused = print(fib8);
+`);
+runcesk("obj1", `
+let x = {};
 `);
