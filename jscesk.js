@@ -76,6 +76,13 @@ class Store {
         return this._store[addr.value] || new CVal(undefined);
     }
     
+    set(addr, val) {
+        if (addr.value in this._store)
+            this._store[addr.value] = val;
+        else
+            unimplemented("set() of addr not in store");
+    }
+
     static extend(store, addr, val) {
         let rv = new Store();
         for (let k of Object.getOwnPropertyNames(store._store)) {
@@ -346,15 +353,63 @@ class CESKBinaryExpression extends CESKExpression {
         this._left = wrap(astnode.left);
         this._right = wrap(astnode.right);
     }
-    get op() { return this._ast.op; }
+    get operator() { return this._ast.operator; }
     get left() { return this._left; }
     get right() { return this._right; }
     eval(fp, store, kont) {
         debug("CESKBinaryExpression.eval");
         let lval = this._left.eval(fp, store, kont);
         let rval = this._right.eval(fp, store, kont);
-        debug (`${lval} + ${rval}`);
-        return new CNum(lval.value + rval.value);
+        switch (this.operator) {
+            case '+': return new CNum(lval.value + rval.value);
+            case '<': return new CBool(lval.value < rval.value);
+            default: return unimplemented(`unrecognized binary operation: ${this.operator}`);
+        }
+        
+    }
+}
+
+class CESKLogicalExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._left = wrap(astnode.left);
+        this._right = wrap(astnode.right);
+    }
+    get operator() { return this._ast.operator; }
+    get left() { return this._left; }
+    get right() { return this._right; }
+    eval(fp, store, kont) {
+        debug("CESKBinaryExpression.eval");
+        let lval = ToBool(this._left.eval(fp, store, kont));
+        let rval = ToBool(this._right.eval(fp, store, kont));
+        switch (this.operator) {
+            default: return unimplemented(`unrecognized logical operation: ${this.operator}`);
+        }
+    }
+}
+
+class CESKAssignmentExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._left = wrap(astnode.left);
+        this._right = wrap(astnode.right);
+    }
+    get op() { return this._ast.op; }
+    get left() { return this._left; }
+    get right() { return this._right; }
+    eval(fp, store, kont) {
+        debug("CESKAssignmentExpression.eval");
+        //let lval = this._left.eval(fp, store, kont);
+        let rval = this._right.eval(fp, store, kont);
+
+        if (this._left.type === b.Identifier) {
+            store.set(fp.offset(this._left.name), rval);
+        }
+        else {
+            return unimplemented("unrecognized lhs");
+        }
+        
+        return rval;
     }
 }
 
@@ -435,6 +490,26 @@ class CESKIf extends CESKStatement {
     }
 }
 
+class CESKWhile extends CESKStatement {
+    constructor(astnode) {
+        super(astnode);
+        this._test = wrap(astnode.test);
+        this._body = wrap(astnode.body);
+    }
+    get test() { return this._test; }
+    get body() { return this._body; }
+    step(fp, store, kont) {
+        debug(`CESKWhile()`);
+        let testValue = ToBool(this._test.eval(fp, store));
+        if (testValue.value) {
+            return new State(this._body, fp, store, kont);
+        }
+        else {
+            return new State(this._nextStmt, fp, store, kont);
+        }
+    }
+}
+
 class CESKEmpty extends CESKStatement {
     constructor(astnode) {
         super(astnode);
@@ -459,7 +534,7 @@ function wrap(astnode) {
     case b.ArrayExpression: return unimplemented('ArrayExpression');
     case b.ArrayPattern: return unimplemented('ArrayPattern');
     case b.ArrowFunctionExpression: return unimplemented('ArrowFunctionExpression');
-    case b.AssignmentExpression: return unimplemented('AssignmentExpression');
+    case b.AssignmentExpression: return new CESKAssignmentExpression(astnode);
     case b.BinaryExpression: return new CESKBinaryExpression(astnode);
     case b.BlockStatement: return new CESKBlockStatement(astnode);
     case b.BreakStatement: return unimplemented('BreakStatement');
@@ -492,7 +567,7 @@ function wrap(astnode) {
     case b.ImportSpecifier: return unimplemented('ImportSpecifier');
     case b.LabeledStatement: return unimplemented('LabeledStatement');
     case b.Literal: return new CESKLiteral(astnode);
-    case b.LogicalExpression: return unimplemented('LogicalExpression');
+    case b.LogicalExpression: return new CESKLogicalExpression(astnode);
     case b.MemberExpression: return unimplemented('MemberExpression');
     case b.MethodDefinition: return unimplemented('MethodDefinition');
     case b.ModuleDeclaration: return unimplemented('ModuleDeclaration');
@@ -516,7 +591,7 @@ function wrap(astnode) {
     case b.UpdateExpression: return unimplemented('UpdateExpression');
     case b.VariableDeclaration: return new CESKVariableDeclaration(astnode);
     case b.VariableDeclarator: return new CESKVariableDeclarator(astnode);
-    case b.WhileStatement: return unimplemented('WhileStatement');
+    case b.WhileStatement: return new CESKWhile(astnode);
     case b.WithStatement: return unimplemented('WithStatement');
     case b.YieldExpression: return unimplemented('YieldExpression');
     default: return unimplemented(astnode.type);
@@ -544,6 +619,10 @@ function assignNext(stmt, next) {
     else if (stmt.type === b.IfStatement) {
         assignNext(stmt.alternate, next);
         assignNext(stmt.consequent, next);
+        stmt._nextStmt = next;
+    }
+    else if (stmt.type === b.WhileStatement) {
+        assignNext(stmt.body, stmt);
         stmt._nextStmt = next;
     }
     else if (stmt.type === b.FunctionDeclaration) {
@@ -601,3 +680,4 @@ function runcesk(program_text) {
 
 runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
 runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
+runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let z = 0; while (z < y) { let unused = print(z); z = z + 1; }");
