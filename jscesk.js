@@ -15,11 +15,11 @@ function unimplemented(msg) {
 }
 
 function warn_unimplemented(msg) {
-    print(`unimplemented functionality: ${msg}`);
+    debug(`unimplemented functionality: ${msg}`);
 }
 
 function error(msg) {
-    print(`ERROR: ${msg}`);
+    debug(`ERROR: ${msg}`);
     throw new Error(msg);
 }
 
@@ -68,11 +68,22 @@ class CObject extends CVal {
     }
     get proto() { return this._proto; }
     set(key, value, store) {
-        warn_unimplemented(`CObject.set(${key.toString()},${value.toString()})`);
+        if (value instanceof Pointer) {
+            this._env.setOffset(key.value, value);
+        }
+        else {
+            warn_unimplemented(`CObject.set(${key.toString()},${value.toString()})`);
+        }
     }
     get(key, store) {
         // we assume that key is a CVal subclass here
-        return this._env.getOffset(key.value);
+        try {
+            return this._env.getOffset(key.value);
+        }
+        catch (e) {
+            // the object didn't have that property, so we add it to the local env
+            return this._env.offset(key.value);
+        }
     }
     toString() { return `CObject`; }
 }
@@ -115,7 +126,7 @@ function GetValue(arg, store) {
 
 function PutValue(ref, val, store) {
     if (ref instanceof Pointer) {
-        store.set(ref, val);
+        store._extend(ref, val);
         return;
     }
 
@@ -989,6 +1000,7 @@ function initES6Env(fp0, store0) {
     let object_prototype = new CObject(Store.NullPointer, store0);
     store0._extend(fp0.offset("%ObjectPrototype%"), object_prototype);
     object_prototype.set(new CStr("hasOwnProperty"), new CBuiltinFunc(1, function _hasOwnProperty(self, needle) { unimplemented("builtin-hasOwnProperty"); }), store0);
+    object_prototype.set(new CStr("toString"), new CBuiltinFunc(1, function _toString(self) { print("[object Object]"); }), store0);
 }
 
 function execute(toplevel) {
@@ -1067,4 +1079,10 @@ let x = {};
 runcesk("member1", `
 let x = {};
 let unused = print(x);
+`);
+runcesk("member2", `
+let x = {};
+x.bar = 5;
+let bar = x.bar;
+let unused = print(bar);
 `);
