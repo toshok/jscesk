@@ -59,17 +59,20 @@ _cbool_false = new CBool(false);
 _cbool_true = new CBool(true);
 
 class CObject extends CVal {
-    constructor(proto) {
-        super(Object.create(proto ? proto.value : null));
-        this._proto = proto;
-        this._env = new Environment(null);
+    constructor(proto_addr, store) {
+        let proto = GetValue(proto_addr, store);
+        super(Object.create(null));
+        this._proto = proto_addr;
+        this._env = new Environment(proto.value ? proto.value._env : null);
+        this._env.setOffset("__proto__", proto_addr);
     }
     get proto() { return this._proto; }
-    set(key, value) {
+    set(key, value, store) {
         warn_unimplemented(`CObject.set(${key.toString()},${value.toString()})`);
     }
-    get(store, key) {
-        unimplemented("CObject.get");
+    get(key, store) {
+        // we assume that key is a CVal subclass here
+        return this._env.getOffset(key.value);
     }
     toString() { return `CObject`; }
 }
@@ -277,14 +280,14 @@ function StrictEqualityComparison(x, y) {
 
 // pointers (and frame pointers, which form our Environment), along with our Store
 let maxPointer = 0;
-class Pointer {
-    constructor() {
-        this.value = ++maxPointer;
-    }
-    toString() { return `Pointer(${this.value})`; }
+function Pointer() {
+    this.value = ++maxPointer;
 }
+Pointer.prototype.toString = function() {
+    return `Pointer(${this.value})`;
+};
 
-class Environment extends Pointer {
+class Environment {
     constructor(parent = null) {
         this._parent = parent;
         this._offset = 0;
@@ -298,6 +301,10 @@ class Environment extends Pointer {
             if (name in fr._offsets)
                 return fr._offsets[name];
         return error(`could not find ${name}`);
+    }
+
+    setOffset(name, addr) {
+        this._offsets[name] = addr;
     }
 
     offset(name) {
@@ -321,10 +328,14 @@ class Store {
     }
 
     get(addr) {
+        if (addr.value === 0)
+            return new CVal(null);
         return this._store[addr.value] || new CVal(undefined);
     }
     
     set(addr, val) {
+        if (addr.value === 0)
+            error("can't set NullPointer's value");
         if (addr.value in this._store)
             this._store[addr.value] = val;
         else
@@ -337,11 +348,16 @@ class Store {
         this._store[addr.value] = val;
     }
 
-    static extend(store, addr, val) {
+    static clone(store) {
         let rv = new Store();
         for (let k of Object.getOwnPropertyNames(store._store)) {
             rv._store[k] = store._store[k];
         }
+        return rv;
+    }
+
+    static extend(store, addr, val) {
+        let rv = Store.clone(store);
         rv._store[addr.value] = val;
         return rv;
     }
@@ -354,6 +370,8 @@ class Store {
         rv += ")";
         return rv;
     }
+
+    static get NullPointer() { return Object.create(Pointer.prototype, { value: { writable: false, configurable: false, value: 0 } }); }
 }
 
 // continuations
@@ -510,12 +528,12 @@ function callFunc(callee, args, name, nextStmt, fp, store, kont) {
         // allocate a new frame
         let fp_ = new Environment();
 
-        let store_ = store;
+        let store_ = Store.clone(store);
         args.forEach((arg, n) => {
             let argval = GetValue(arg.eval(fp, store, kont), store);
             if (n < callee_.params.length) {
-                store_ = Store.extend(store_, fp_.offset(callee_.params[n].name), argval);
-                debug(`${n} ${callee_.params[n].name} = ${store_.get(fp_.offset(callee_.params[n].name))}`);
+                store_._extend(fp_.offset(callee_.params[n].name), argval);
+                debug(`${n} ${callee_.params[n].name} = ${GetValue(fp_.offset(callee_.params[n].name), store)}`);
             }
         });
         
@@ -549,11 +567,11 @@ class CESKVariableDeclaration extends CESKStatement {
             return callFunc(init.callee, init.arguments, name, this.nextStmt, fp, store, kont);
         }
         else {
-            let store_ = store;
+            let store_ = Store.clone(store);
             for (let decl of this.declarations) {
                 let val = GetValue(decl.init.eval(fp, store, kont), store);
                 debug(val.toString());
-                store_ = Store.extend(store_, fp.offset(decl.name), val);
+                store_._extend(fp.offset(decl.name), val);
             }
             return new State(this.nextStmt, fp, store_, kont);
         }
@@ -577,10 +595,33 @@ class CESKIdentifier extends CESKExpression {
     }
     get name() { return this._ast.name; }
     eval(fp, store, kont) {
-        debug(`CESKIdentifier.eval(${this._ast.name})`);
-        debug(` offset = ${fp.getOffset(this._ast.name)}`);
-        debug(` val = ${GetValue(fp.getOffset(this._ast.name), store).toString()}`);
         return fp.getOffset(this._ast.name);
+    }
+}
+
+class CESKMemberExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._object = wrap(this._ast.object);
+        // we convert all member expressions to computed.
+        // so:
+        //     foo.bar
+        // becomes:
+        //     foo['bar']
+        //
+        if (this._ast.property.type === b.Identifier)
+            this._property = wrap(b.literal(this._ast.property.name));
+        else
+            this._property = wrap(this._ast.property);
+    }
+    get object() { return this._object; }
+    get property() { return this._property; }
+    eval(fp, store, kont) {
+        let oref = this.object.eval(fp, store, kont);
+        let oval = GetValue(oref, store);
+        if (!(oval instanceof CObject))
+            error("member expression with lhs not an object");
+        return oval.get(this.property);
     }
 }
 
@@ -743,7 +784,7 @@ class CESKObjectExpression extends CESKExpression {
     }
     get properties() { return this._properties; }
     eval(fp, store, kont) {
-        let rv = new CObject(GetValue(fp.getOffset("%ObjectPrototype%"), store));
+        let rv = new CObject(fp.getOffset("%ObjectPrototype%"), store);
         // XXX properties
         return rv;
     }
@@ -863,7 +904,7 @@ function wrap(astnode) {
     case b.LabeledStatement: return unimplemented('LabeledStatement');
     case b.Literal: return new CESKLiteral(astnode);
     case b.LogicalExpression: return new CESKLogicalExpression(astnode);
-    case b.MemberExpression: return unimplemented('MemberExpression');
+    case b.MemberExpression: return new CESKMemberExpression(astnode);
     case b.MethodDefinition: return unimplemented('MethodDefinition');
     case b.ModuleDeclaration: return unimplemented('ModuleDeclaration');
     case b.NewExpression: return unimplemented('NewExpression');
@@ -945,17 +986,19 @@ function assignNext(stmt, next) {
 function initES6Env(fp0, store0) {
     store0._extend(fp0.offset("print"), new CBuiltinFunc(1, function _print(x) { console.log(x); }));
 
-    let object_prototype = new CObject(null);
+    let object_prototype = new CObject(Store.NullPointer, store0);
     store0._extend(fp0.offset("%ObjectPrototype%"), object_prototype);
-    object_prototype.set(new CStr("hasOwnProperty"), new CBuiltinFunc(1, function _hasOwnProperty(self, needle) { unimplemented("builtin-hasOwnProperty"); }));
+    object_prototype.set(new CStr("hasOwnProperty"), new CBuiltinFunc(1, function _hasOwnProperty(self, needle) { unimplemented("builtin-hasOwnProperty"); }), store0);
 }
 
 function execute(toplevel) {
+    maxPointer = 0;
+
+    // create an initial store (this also initializes the store's NullPointer)
+    let store0 = new Store();
+
     // allocate an initial frame pointer
     let fp0 = new Environment();
-
-    // create an initial store
-    let store0 = new Store();
 
     initES6Env(fp0, store0);
 
@@ -1020,4 +1063,8 @@ let unused = print(fib8);
 `);
 runcesk("obj1", `
 let x = {};
+`);
+runcesk("member1", `
+let x = {};
+let unused = print(x);
 `);
