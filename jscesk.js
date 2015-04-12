@@ -9,6 +9,21 @@ function debug(msg) {
     //console.log(msg);
 }
 
+function unimplemented(msg) {
+    print(`unimplemented functionality: ${msg}`);
+    throw new Error(msg);
+}
+
+function warn_unimplemented(msg) {
+    print(`unimplemented functionality: ${msg}`);
+}
+
+function error(msg) {
+    print(`ERROR: ${msg}`);
+    throw new Error(msg);
+}
+
+
 // CESK = (C)ode, (E)nvironment, (S)tore, and K(C)ontinuation
 //
 // Code        : just our AST, helpfully converted to ANF, and with a _nextStmt for each statement
@@ -47,12 +62,13 @@ class CObject extends CVal {
     constructor(proto) {
         super(Object.create(proto ? proto.value : null));
         this._proto = proto;
+        this._env = new Environment(null);
     }
     get proto() { return this._proto; }
     set(key, value) {
-        unimplemented("CObject.set");
+        warn_unimplemented(`CObject.set(${key.toString()},${value.toString()})`);
     }
-    get(key) {
+    get(store, key) {
         unimplemented("CObject.get");
     }
     toString() { return `CObject`; }
@@ -85,17 +101,23 @@ class CBuiltinFunc extends CVal {
     
 
 
-function unimplemented(msg) {
-    print(`unimplemented functionality: ${msg}`);
-    throw new Error(msg);
-}
-
-function error(msg) {
-    print(`ERROR: ${msg}`);
-    throw new Error(msg);
-}
-
 // JS spec functions
+
+function GetValue(arg, store) {
+    if (arg instanceof Pointer) {
+        return store.get(arg);
+    }
+    return arg;
+}
+
+function PutValue(ref, val, store) {
+    if (ref instanceof Pointer) {
+        store.set(ref, val);
+        return;
+    }
+
+    error ("PutValue passed non-ref first arg");
+}
 
 // 7.1.1
 function ToPrimitive(val, PreferredType) {
@@ -104,7 +126,7 @@ function ToPrimitive(val, PreferredType) {
     else if (val instanceof CBool) { return val; }
     else if (val instanceof CNum)  { return val; }
     else if (val instanceof CStr)  { return val; }
-    return unimplemented("ToPrimitive");
+    return unimplemented(`ToPrimitive ${val.toString()}`);
 }
 
 // 7.1.2
@@ -262,14 +284,14 @@ class Pointer {
     toString() { return `Pointer(${this.value})`; }
 }
 
-class FramePointer extends Pointer {
+class Environment extends Pointer {
     constructor(parent = null) {
         this._parent = parent;
         this._offset = 0;
         this._offsets = Object.create(null);
     }
     
-    push() { return new FramePointer(this); }
+    push() { return new Environment(this); }
 
     getOffset(name) {
         for (let fr = this; fr != null; fr = fr._parent)
@@ -290,7 +312,7 @@ class FramePointer extends Pointer {
          return this._offset - 1;
          */
     }
-    toString() { return `FramePointer(${this.value})`; }
+    toString() { return `Environment(${this.value})`; }
 }
 
 class Store {
@@ -307,6 +329,12 @@ class Store {
             this._store[addr.value] = val;
         else
             unimplemented("set() of addr not in store");
+    }
+
+    // in-place extend, used to populate the initial environment, and
+    // probably shouldn't be used anywhere else.
+    _extend(addr, val) {
+        this._store[addr.value] = val;
     }
 
     static extend(store, addr, val) {
@@ -429,7 +457,7 @@ class CESKReturn extends CESKStatement {
     step(fp, store, kont) {
         debug("CESKReturn.step");
 
-        let returnValue = this._argument.eval(fp, store);
+        let returnValue = GetValue(this._argument.eval(fp, store), store);
         return kont.apply(returnValue, store);
     }
 }
@@ -464,10 +492,10 @@ class CESKBlockStatement extends CESKStatement {
 }
 
 function callFunc(callee, args, name, nextStmt, fp, store, kont) {
-    let callee_ = callee.eval(fp, store, kont);
+    let callee_ = GetValue(callee.eval(fp, store, kont), store);
     if (callee_ instanceof CBuiltinFunc) {
         let js_args = args.map((arg) => {
-            return arg.eval(fp, store, kont).value;
+            return GetValue(arg.eval(fp, store, kont), store).value;
         });
         let kont_ = new AssignKont(name, nextStmt, fp, kont);
         return kont_.apply(callee_.value.apply(undefined, js_args), store);
@@ -480,11 +508,11 @@ function callFunc(callee, args, name, nextStmt, fp, store, kont) {
     else {
         debug("calling JS function");
         // allocate a new frame
-        let fp_ = new FramePointer();
+        let fp_ = new Environment();
 
         let store_ = store;
         args.forEach((arg, n) => {
-            let argval = arg.eval(fp, store, kont);
+            let argval = GetValue(arg.eval(fp, store, kont), store);
             if (n < callee_.params.length) {
                 store_ = Store.extend(store_, fp_.offset(callee_.params[n].name), argval);
                 debug(`${n} ${callee_.params[n].name} = ${store_.get(fp_.offset(callee_.params[n].name))}`);
@@ -523,7 +551,7 @@ class CESKVariableDeclaration extends CESKStatement {
         else {
             let store_ = store;
             for (let decl of this.declarations) {
-                let val = decl.init.eval(fp, store, kont);
+                let val = GetValue(decl.init.eval(fp, store, kont), store);
                 debug(val.toString());
                 store_ = Store.extend(store_, fp.offset(decl.name), val);
             }
@@ -551,8 +579,8 @@ class CESKIdentifier extends CESKExpression {
     eval(fp, store, kont) {
         debug(`CESKIdentifier.eval(${this._ast.name})`);
         debug(` offset = ${fp.getOffset(this._ast.name)}`);
-        debug(` val = ${store.get(fp.getOffset(this._ast.name)).toString()}`);
-        return store.get(fp.getOffset(this._ast.name));
+        debug(` val = ${GetValue(fp.getOffset(this._ast.name), store).toString()}`);
+        return fp.getOffset(this._ast.name);
     }
 }
 
@@ -567,8 +595,10 @@ class CESKBinaryExpression extends CESKExpression {
     get right() { return this._right; }
     eval(fp, store, kont) {
         debug("CESKBinaryExpression.eval");
-        let lval = this._left.eval(fp, store, kont);
-        let rval = this._right.eval(fp, store, kont);
+        let lref = this._left.eval(fp, store, kont);
+        let lval = GetValue(lref, store);
+        let rref = this._right.eval(fp, store, kont);
+        let rval = GetValue(rref, store);
         switch (this.operator) {
         case '+': return new CNum(lval.value + rval.value);
         case '-': return new CNum(lval.value - rval.value);
@@ -626,8 +656,8 @@ class CESKLogicalExpression extends CESKExpression {
     get right() { return this._right; }
     eval(fp, store, kont) {
         debug("CESKBinaryExpression.eval");
-        let lval = ToBoolean(this._left.eval(fp, store, kont));
-        let rval = ToBoolean(this._right.eval(fp, store, kont));
+        let lval = ToBoolean(GetValue(this._left.eval(fp, store, kont), store));
+        let rval = ToBoolean(GetValue(this._right.eval(fp, store, kont), store));
         switch (this.operator) {
             default: return unimplemented(`unrecognized logical operation: ${this.operator}`);
         }
@@ -645,15 +675,12 @@ class CESKAssignmentExpression extends CESKExpression {
     get right() { return this._right; }
     eval(fp, store, kont) {
         debug("CESKAssignmentExpression.eval");
-        //let lval = this._left.eval(fp, store, kont);
-        let rval = this._right.eval(fp, store, kont);
+        let lref = this._left.eval(fp, store, kont);
 
-        if (this._left.type === b.Identifier) {
-            store.set(fp.getOffset(this._left.name), rval);
-        }
-        else {
-            return unimplemented("unrecognized lhs");
-        }
+        let rref = this._right.eval(fp, store, kont);
+        let rval = GetValue(rref, store);
+
+        PutValue(lref, rval, store);
         
         return rval;
     }
@@ -667,7 +694,7 @@ class CESKExpressionStatement extends CESKStatement {
     get expression() { return this._expression; }
     step(fp, store, kont) {
         debug("CESKExpressionStatement.step");
-        let val = this._expression.eval(fp, store, kont);
+        let val = GetValue(this._expression.eval(fp, store, kont), store);
         if (val instanceof State)
             return val;
         return new State(this.nextStmt, fp, store, kont);
@@ -716,7 +743,7 @@ class CESKObjectExpression extends CESKExpression {
     }
     get properties() { return this._properties; }
     eval(fp, store, kont) {
-        let rv = new CObject(store.get(fp.getOffset("%ObjectPrototype%")));
+        let rv = new CObject(GetValue(fp.getOffset("%ObjectPrototype%"), store));
         // XXX properties
         return rv;
     }
@@ -745,7 +772,7 @@ class CESKIf extends CESKStatement {
     get consequent() { return this._consequent; }
     get alternate() { return this._alternate; }
     step(fp, store, kont) {
-        let testValue = ToBoolean(this._test.eval(fp, store));
+        let testValue = ToBoolean(GetValue(this._test.eval(fp, store), store));
         if (testValue.value) {
             return new State(this._consequent, fp, store, kont);
         }
@@ -768,7 +795,7 @@ class CESKWhile extends CESKStatement {
     get body() { return this._body; }
     step(fp, store, kont) {
         debug(`CESKWhile()`);
-        let testValue = ToBoolean(this._test.eval(fp, store));
+        let testValue = ToBoolean(GetValue(this._test.eval(fp, store), store));
         if (testValue.value) {
             return new State(this._body, fp, store, kont);
         }
@@ -916,19 +943,21 @@ function assignNext(stmt, next) {
 }
 
 function initES6Env(fp0, store0) {
-    store0 = Store.extend(store0, fp0.offset("print"), new CBuiltinFunc(1, function print(x) { console.log(x); }));
-    store0 = Store.extend(store0, fp0.offset("%ObjectPrototype%"), new CObject(null));
-    return store0;
+    store0._extend(fp0.offset("print"), new CBuiltinFunc(1, function _print(x) { console.log(x); }));
+
+    let object_prototype = new CObject(null);
+    store0._extend(fp0.offset("%ObjectPrototype%"), object_prototype);
+    object_prototype.set(new CStr("hasOwnProperty"), new CBuiltinFunc(1, function _hasOwnProperty(self, needle) { unimplemented("builtin-hasOwnProperty"); }));
 }
 
 function execute(toplevel) {
     // allocate an initial frame pointer
-    let fp0 = new FramePointer();
+    let fp0 = new Environment();
 
     // create an initial store
     let store0 = new Store();
 
-    store0 = initES6Env(fp0, store0);
+    initES6Env(fp0, store0);
 
     // get the Halt continuation
     let halt = new HaltKont();
