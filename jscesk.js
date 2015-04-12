@@ -18,12 +18,12 @@ function debug(msg) {
 //
 
 function unimplemented(msg) {
-    debug(`unimplemented functionality: ${msg}`);
+    print(`unimplemented functionality: ${msg}`);
     throw new Error(msg);
 }
 
 function error(msg) {
-    debug(`ERROR: ${msg}`);
+    print(`ERROR: ${msg}`);
     throw new Error(msg);
 }
 
@@ -125,6 +125,66 @@ function AbstractRelationalComparison(x, y, leftFirst) {
     }
 }
 
+// 7.2.12
+function AbstractEqualityComparison(x, y) {
+    // 3. If Type(x) is the same as Type(y), then
+    // a. Return the result of performing Strict Equality Comparison x === y.
+    // 4. If x is null and y is undefined, return true.
+    // 5. If x is undefined and y is null, return true.
+    // 6. If Type(x) is Number and Type(y) is String, return the result of the comparison x == ToNumber(y).
+    // 7. If Type(x) is String and Type(y) is Number, return the result of the comparison ToNumber(x) == y.
+    // 8. If Type(x) is Boolean, return the result of the comparison ToNumber(x) == y.
+    // 9. If Type(y) is Boolean, return the result of the comparison x == ToNumber(y).
+    // 10. If Type(x) is either String, Number, or Symbol and Type(y) is Object, then return the result of the comparison x == ToPrimitive(y).
+    // 11. If Type(x) is Object and Type(y) is either String, Number, or Symbol, then return the result of the comparison ToPrimitive(x) == y.
+    // 12. Return false.
+    return CBool.False;
+}
+
+// 7.2.13
+function StrictEqualityComparison(x, y) {
+    debug(`comparing ${x.toString()} with ${y.toString()}`);
+    // 1. If Type(x) is different from Type(y), return false.
+    // 2. If Type(x) is Undefined, return true.
+    if (x.value === undefined) return CBool.True;
+    // 3. If Type(x) is Null, return true.
+    if (x.value === null) return CBool.True;
+    // 4. If Type(x) is Number, then
+    if (x instanceof CNum) {
+        // a. If x is NaN, return false.
+        if (isNaN(x.value)) return CBool.False;
+        // b. If y is NaN, return false.
+        if (isNaN(y.value)) return CBool.False;
+        // c. If x is the same Number value as y, return true.
+        if (x.value === y.value) return CBool.True;
+        // d. If x is +0 and y is 0, return true.
+        if (x.value === +0 && y.value === -0) return CBool.True;
+        // e. If x is 0 and y is +0, return true.
+        if (x.value === -0 && y.value === +0) return CBool.True;
+        // f. Return false.
+        return CBool.False;
+    }
+    // 5. If Type(x) is String, then
+    if (x instanceof CStr) {
+        // a. If x and y are exactly the same sequence of code units (same length and same code units at corresponding indices), return true.
+        if (x.value === y.value) return CBool.True;
+        // b. Else, return false.
+        return CBool.False;
+    }
+    // 6. If Type(x) is Boolean, then
+    if (x instanceof CBool) {
+        // a. If x and y are both true or both false, return true.
+        if (x.value === y.value) return CBool.True;
+        // b. Else, return false.
+        return CBool.False;
+    }
+    return unimplemented("StrictEq not finished");
+    // 7. If x and y are the same Symbol value, return true.
+    // 8. If x and y are the same Object value, return true.
+    // 9. Return false.
+    return CBool.False;
+}
+
 // pointers (and frame pointers, which form our Environment), along with our Store
 let maxPointer = 0;
 class Pointer {
@@ -135,25 +195,34 @@ class Pointer {
 }
 
 class FramePointer extends Pointer {
-    constructor() {
+    constructor(parent = null) {
+        this._parent = parent;
         this._offset = 0;
         this._offsets = Object.create(null);
     }
     
-    push() { return new FramePointer(); }
+    push() { return new FramePointer(this); }
+
+    getOffset(name) {
+        for (let fr = this; fr != null; fr = fr._parent)
+            if (name in fr._offsets)
+                return fr._offsets[name];
+        return error(`could not find ${name}`);
+    }
 
     offset(name) {
         if (name in this._offsets)
             return this._offsets[name];
+        
         let rv = new Pointer();
         this._offsets[name] = rv;
         return rv;
         /*
-        this._offsets[name] = this._offset++;
-        return this._offset - 1;
+         this._offsets[name] = this._offset++;
+         return this._offset - 1;
          */
     }
-        toString() { return `FramePointer(${this.value})`; }
+    toString() { return `FramePointer(${this.value})`; }
 }
 
 class Store {
@@ -302,9 +371,10 @@ class CESKFunctionDeclaration extends CESKStatement {
     constructor(astnode) {
         super(astnode);
         this._body = wrap(astnode.body);
-        // params
+        this._params = astnode.params.map(wrap);
         // name
     }
+    get params() { return this._ast.params; }
     get body() { return this._body; }
     get name() { return this._ast.id.name; }
     
@@ -379,8 +449,24 @@ function callFunc(callee, args, name, nextStmt, fp, store, kont) {
         return error("callee is not a function");
     }
     else {
+        debug("calling JS function");
+        // allocate a new frame
+        let fp_ = new FramePointer();
+
+        let store_ = store;
+        args.forEach((arg, n) => {
+            let argval = arg.eval(fp, store, kont);
+            if (n < callee_.params.length) {
+                store_ = Store.extend(store_, fp_.offset(callee_.params[n].name), argval);
+                debug(`${n} ${callee_.params[n].name} = ${store_.get(fp_.offset(callee_.params[n].name))}`);
+            }
+        });
+        
+
+        fp_._parent = fp;
+
         let kont_ = new AssignKont(name, nextStmt, fp, kont);
-        return new State(callee_.body, fp, store, kont_);
+        return new State(callee_.body, fp_, store_, kont_);
     }
 }
     
@@ -402,7 +488,7 @@ class CESKVariableDeclaration extends CESKStatement {
             // XXX should assert that init.callee is an identifier
             debug(` store is ${store.toString()}`);
             debug(` callee.name is ${init.callee.name}`);
-            debug(` fp.offset(callee.name) is ${fp.offset(init.callee.name).toString()}`);
+            debug(` fp.getOffset(callee.name) is ${fp.getOffset(init.callee.name).toString()}`);
             return callFunc(init.callee, init.arguments, name, this.nextStmt, fp, store, kont);
         }
         else {
@@ -435,8 +521,9 @@ class CESKIdentifier extends CESKExpression {
     get name() { return this._ast.name; }
     eval(fp, store, kont) {
         debug(`CESKIdentifier.eval(${this._ast.name})`);
-        debug(` offset = ${fp.offset(this._ast.name)}`);
-        return store.get(fp.offset(this._ast.name));
+        debug(` offset = ${fp.getOffset(this._ast.name)}`);
+        debug(` val = ${store.get(fp.getOffset(this._ast.name)).toString()}`);
+        return store.get(fp.getOffset(this._ast.name));
     }
 }
 
@@ -454,34 +541,48 @@ class CESKBinaryExpression extends CESKExpression {
         let lval = this._left.eval(fp, store, kont);
         let rval = this._right.eval(fp, store, kont);
         switch (this.operator) {
-            case '+': return new CNum(lval.value + rval.value);
-            case '<': { 
-                let r = AbstractRelationalComparison(lval, rval, true);
-                if (r.value === undefined)
-                    return CBool.False;
-                return r;
-            }
-            case '>': { 
-                let r = AbstractRelationalComparison(lval, rval, false);
-                if (r.value === undefined)
-                    return CBool.False;
-                return r;
-            }
-            case '<=': { 
-                let r = AbstractRelationalComparison(lval, rval, false);
-                if (r.value === undefined || r.value === true)
-                    return CBool.False;
-                return CBool.True;
-            }
-            case '>=': { 
-                let r = AbstractRelationalComparison(lval, rval, true);
-                if (r.value === undefined || r.value === true)
-                    return CBool.False;
-                return CBool.True;
-            }
-            default: return unimplemented(`unrecognized binary operation: ${this.operator}`);
+        case '+': return new CNum(lval.value + rval.value);
+        case '-': return new CNum(lval.value - rval.value);
+        case '<': { 
+            let r = AbstractRelationalComparison(lval, rval, true);
+            if (r.value === undefined)
+                return CBool.False;
+            return r;
         }
-        
+        case '>': { 
+            let r = AbstractRelationalComparison(lval, rval, false);
+            if (r.value === undefined)
+                return CBool.False;
+            return r;
+        }
+        case '<=': { 
+            let r = AbstractRelationalComparison(lval, rval, false);
+            if (r.value === undefined || r.value === true)
+                return CBool.False;
+            return CBool.True;
+        }
+        case '>=': { 
+            let r = AbstractRelationalComparison(lval, rval, true);
+            if (r.value === undefined || r.value === true)
+                return CBool.False;
+            return CBool.True;
+        }
+        case '==': {
+            return AbstractEqualityComparison(lval, rval);
+        }
+        case '!=': {
+            let r = AbstractEqualityComparison(lval, rval);
+            return r.value === true ? CBool.False : CBool.True;
+        }
+        case '===': {
+            return StrictEqualityComparison(lval, rval);
+        }
+        case '!==': {
+            let r = StrictEqualityComparison(lval, rval);
+            return r.value === true ? CBool.False : CBool.True;
+        }
+        default: return unimplemented(`unrecognized binary operation: ${this.operator}`);
+        }
     }
 }
 
@@ -519,7 +620,7 @@ class CESKAssignmentExpression extends CESKExpression {
         let rval = this._right.eval(fp, store, kont);
 
         if (this._left.type === b.Identifier) {
-            store.set(fp.offset(this._left.name), rval);
+            store.set(fp.getOffset(this._left.name), rval);
         }
         else {
             return unimplemented("unrecognized lhs");
@@ -575,8 +676,6 @@ class CESKCallExpression extends CESKExpression {
     eval(fp, store, kont) {
         debug("CESKCallExpression.eval");
         // ANF should have ensured that this would be a simple identifier lookup, not a complex expression, and cannot throw.
-
-        // XXX eval arguments
         return callFunc(this._callee, this._arguments, undefined, this.nextStmt, fp, store, kont);
     }
 }
@@ -733,8 +832,9 @@ function assignNext(stmt, next) {
             stmt._nextStmt = next;
     }
     else if (stmt.type === b.IfStatement) {
-        assignNext(stmt.alternate, next);
         assignNext(stmt.consequent, next);
+        if (stmt.alternate)
+            assignNext(stmt.alternate, next);
         stmt._nextStmt = next;
     }
     else if (stmt.type === b.WhileStatement) {
@@ -797,3 +897,18 @@ function runcesk(program_text) {
 runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
 runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
 runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let z = 0; while (z < y) { let unused = print(z); z = z + 1; }");
+runcesk(`
+function fib(n) {
+    if (n === 0) return 1;
+    if (n === 1) return 1;
+
+    let n_1 = n-1;
+    let n_2 = n-2;
+    let fib_1 = fib(n_1);
+    let fib_2 = fib(n_2);
+    let rv = fib_1 + fib_2;
+    return rv;
+}
+let fib8 = fib(8);
+let unused = print(fib8);
+`);
