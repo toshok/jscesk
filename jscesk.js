@@ -28,12 +28,101 @@ function error(msg) {
 }
 
 // JS spec functions
-function ToBool(val) {
-    if (val instanceof CBool)
-        return val;
-    else if (val instanceof CNum)
-        return new CBool(isNaN(val.value) || val.value === 0);
-    return unimplemented("ToBool");
+
+// 7.1.1
+function ToPrimitive(val, PreferredType) {
+    if (val.value === undefined)   { return val; }
+    else if (val.value === null)   { return val; }
+    else if (val instanceof CBool) { return val; }
+    else if (val instanceof CNum)  { return val; }
+    else if (val instanceof CStr)  { return val; }
+    return unimplemented("ToPrimitive");
+}
+
+// 7.1.2
+function ToBoolean(val) {
+    if (val instanceof CBool) { return val; }
+    else if (val.value === undefined) { return CBool.False; }
+    else if (val.value === null) { return CBool.False; }
+    else if (val instanceof CNum) { return (isNaN(val.value) || val.value === 0) ? CBool.True : CBool.False; }
+    else if (val instanceof CStr) { return val.value === "" ? CBool.True : CBool.False; }
+    else
+        // XXX Symbol and Object bool convert to true
+        return CBool.True;
+    return unimplemented("ToBoolean");
+}
+
+
+// 7.1.3
+function ToNumber(val) {
+    if (val.value === undefined) { return new CNum(NaN); }
+    else if (val.value === null) { return new CNum(0); }
+    else if (val instanceof CBool) { return new CNum(val.value ? 1 : 0); }
+    else if (val instanceof CNum) { return val; }
+
+    return unimplemented("missing ToNumber() support");
+}
+
+// 7.2.11
+function AbstractRelationalComparison(x, y, leftFirst) {
+    let px, py;
+    // 3. If the LeftFirst flag is true, then
+    if (leftFirst) {
+        px = ToPrimitive(x);
+        py = ToPrimitive(y);
+    }
+    else {
+        py = ToPrimitive(y);
+        px = ToPrimitive(x);
+    }
+    if (px instanceof CStr && py instanceof CStr) {
+        // itself, because r may be the empty String.)
+        if (px.value.startsWith(py.value)) return CBool.False;
+        
+        // b. If px is a prefix of py, return true.
+        if (py.value.startsWith(px.value)) return CBool.True;
+        // c. Let k be the smallest nonnegative integer such that the code unit at index k within px is different from the code unit at index k within py. (There must be such a k, for neither String is a prefix of the other.)
+        // d. Let m be the integer that is the code unit value at index k within px.
+        // e. Let n be the integer that is the code unit value at index k within py.
+        // f. If m < n, return true. Otherwise, return false.
+        return unimplemented("string relation");
+    }
+    // 6. Else,
+    else {
+        // a. Let nx be ToNumber(px). Because px and py are primitive values evaluation order is not important.
+        // c. Let ny be ToNumber(py).
+        let nx = ToNumber(px);
+        let ny = ToNumber(py);
+
+
+        // e. If nx is NaN, return undefined.
+        if (isNaN(nx.value)) return new CVal(undefined);
+        // f. If ny is NaN, return undefined.
+        if (isNaN(ny.value)) return new CVal(undefined);
+
+        // g. If nx and ny are the same Number value, return false.
+        if (nx.value === ny.value) return CBool.False;
+
+        // h. If nx is +0 and ny is 0, return false.
+        if (nx.value === +0 && ny === -0) return CBool.False;
+
+        // i. If nx is 0 and ny is +0, return false.
+        if (nx.value === -0 && ny === +0) return CBool.False;
+
+        // j. If nx is +, return false.
+        if (nx.value === +Infinity) return CBool.False;
+
+        // k. If ny is +, return true.
+        if (ny.value === +Infinity) return CBool.True;
+
+        // l. If ny is , return false.
+        if (ny.value === -Infinity) return CBool.False;
+        // m. If nx is , return true.
+        if (nx.value === -Infinity) return CBool.True;
+
+        // n. If the mathematical value of nx is less than the mathematical value of ny —note that these mathematical values are both finite and not both zero—return true. Otherwise, return false.
+        return (nx.value < ny.value) ? CBool.True : CBool.False;
+    }
 }
 
 // pointers (and frame pointers, which form our Environment), along with our Store
@@ -116,6 +205,10 @@ class CBool extends CVal {
     constructor(val) {
         super(val);
     }
+
+    static get False() { return new CBool(false); }
+    static get True() { return new CBool(true); }
+    toString() { return `CBool(${this.value})`; }
 }
 
 class CNum extends CVal {
@@ -362,7 +455,30 @@ class CESKBinaryExpression extends CESKExpression {
         let rval = this._right.eval(fp, store, kont);
         switch (this.operator) {
             case '+': return new CNum(lval.value + rval.value);
-            case '<': return new CBool(lval.value < rval.value);
+            case '<': { 
+                let r = AbstractRelationalComparison(lval, rval, true);
+                if (r.value === undefined)
+                    return CBool.False;
+                return r;
+            }
+            case '>': { 
+                let r = AbstractRelationalComparison(lval, rval, false);
+                if (r.value === undefined)
+                    return CBool.False;
+                return r;
+            }
+            case '<=': { 
+                let r = AbstractRelationalComparison(lval, rval, false);
+                if (r.value === undefined || r.value === true)
+                    return CBool.False;
+                return CBool.True;
+            }
+            case '>=': { 
+                let r = AbstractRelationalComparison(lval, rval, true);
+                if (r.value === undefined || r.value === true)
+                    return CBool.False;
+                return CBool.True;
+            }
             default: return unimplemented(`unrecognized binary operation: ${this.operator}`);
         }
         
@@ -380,8 +496,8 @@ class CESKLogicalExpression extends CESKExpression {
     get right() { return this._right; }
     eval(fp, store, kont) {
         debug("CESKBinaryExpression.eval");
-        let lval = ToBool(this._left.eval(fp, store, kont));
-        let rval = ToBool(this._right.eval(fp, store, kont));
+        let lval = ToBoolean(this._left.eval(fp, store, kont));
+        let rval = ToBoolean(this._right.eval(fp, store, kont));
         switch (this.operator) {
             default: return unimplemented(`unrecognized logical operation: ${this.operator}`);
         }
@@ -477,7 +593,7 @@ class CESKIf extends CESKStatement {
     get consequent() { return this._consequent; }
     get alternate() { return this._alternate; }
     step(fp, store, kont) {
-        let testValue = ToBool(this._test.eval(fp, store));
+        let testValue = ToBoolean(this._test.eval(fp, store));
         if (testValue.value) {
             return new State(this._consequent, fp, store, kont);
         }
@@ -500,7 +616,7 @@ class CESKWhile extends CESKStatement {
     get body() { return this._body; }
     step(fp, store, kont) {
         debug(`CESKWhile()`);
-        let testValue = ToBool(this._test.eval(fp, store));
+        let testValue = ToBoolean(this._test.eval(fp, store));
         if (testValue.value) {
             return new State(this._body, fp, store, kont);
         }
