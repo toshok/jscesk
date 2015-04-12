@@ -27,6 +27,15 @@ function error(msg) {
     throw new Error(msg);
 }
 
+// JS spec functions
+function ToBool(val) {
+    if (val instanceof CBool)
+        return val;
+    else if (val instanceof CNum)
+        return new CBool(isNaN(val.value) || val.value === 0);
+    return unimplemented("ToBool");
+}
+
 // pointers (and frame pointers, which form our Environment), along with our Store
 let maxPointer = 0;
 class Pointer {
@@ -94,6 +103,12 @@ class CVal {
     }
     get value() { return this._val; }
     toString() { return `CVal(${this.value})`; }
+}
+
+class CBool extends CVal {
+    constructor(val) {
+        super(val);
+    }
 }
 
 class CNum extends CVal {
@@ -371,6 +386,8 @@ class CESKLiteral extends CESKExpression {
             return new CNum(this._ast.value);
         else if (typeof(this._ast.value) === "string")
             return new CStr(this._ast.value);
+        else if (typeof(this._ast.value) === "boolean")
+            return new CBool(this._ast.value);
         return unimplemented("CESKLiteral.eval");
     }
     toString() { return `CESKLiteral(${this.value})`; }
@@ -393,13 +410,47 @@ class CESKCallExpression extends CESKExpression {
     }
 }
 
+class CESKIf extends CESKStatement {
+    constructor(astnode) {
+        super(astnode);
+        this._test = wrap(astnode.test);
+        this._consequent = wrap(astnode.consequent);
+        if (astnode.alternate)
+            this._alternate = wrap(astnode.alternate);
+    }
+    get test() { return this._test; }
+    get consequent() { return this._consequent; }
+    get alternate() { return this._alternate; }
+    step(fp, store, kont) {
+        let testValue = ToBool(this._test.eval(fp, store));
+        if (testValue.value) {
+            return new State(this._consequent, fp, store, kont);
+        }
+        else if (this._alternate) {
+            return new State(this._alternate, fp, store, kont);
+        }
+        else {
+            return new State(this._nextStmt, fp, store, kont);
+        }
+    }
+}
+
+class CESKEmpty extends CESKStatement {
+    constructor(astnode) {
+        super(astnode);
+    }
+    step(fp, store, kont) {
+        return new State(this.nextStmt, fp, store, kont);
+    }
+}
+
 class CESKDone extends CESKStatement {
     constructor() {
         super({ type: "Done" });
+        this.done = true;
     }
     step(fp, store, kont) {
-        debug("done");
-        process.exit(0);
+        error("shouldn't reach here");
     }
 }
 
@@ -425,7 +476,7 @@ function wrap(astnode) {
     case b.ContinueStatement: return unimplemented('ContinueStatement');
     case b.DebuggerStatement: return unimplemented('DebuggerStatement');
     case b.DoWhileStatement: return unimplemented('DoWhileStatement');
-    case b.EmptyStatement: return unimplemented('EmptyStatement');
+    case b.EmptyStatement: return new CESKEmpty(astnode);
     case b.ExportDeclaration: return unimplemented('ExportDeclaration');
     case b.ExportBatchSpecifier: return unimplemented('ExportBatchSpecifier');
     case b.ExportSpecifier: return unimplemented('ExportSpecifier');
@@ -436,7 +487,7 @@ function wrap(astnode) {
     case b.FunctionDeclaration: return new CESKFunctionDeclaration(astnode);
     case b.FunctionExpression: return unimplemented('FunctionExpression');
     case b.Identifier: return new CESKIdentifier(astnode);
-    case b.IfStatement: return unimplemented('IfStatement');
+    case b.IfStatement: return new CESKIf(astnode);
     case b.ImportDeclaration: return unimplemented('ImportDeclaration');
     case b.ImportSpecifier: return unimplemented('ImportSpecifier');
     case b.LabeledStatement: return unimplemented('LabeledStatement');
@@ -490,6 +541,11 @@ function assignNext(stmt, next) {
         else
             stmt._nextStmt = next;
     }
+    else if (stmt.type === b.IfStatement) {
+        assignNext(stmt.alternate, next);
+        assignNext(stmt.consequent, next);
+        stmt._nextStmt = next;
+    }
     else if (stmt.type === b.FunctionDeclaration) {
         assignNext(stmt.body, null);
         stmt._nextStmt = next;
@@ -528,7 +584,7 @@ function execute(toplevel) {
     let state = new State(toplevel, fp0, store0, halt);
 
     // Run until termination:
-    while (true) {
+    while (!state.stmt.done) {
         state = state.next();
     }
 }
@@ -543,4 +599,5 @@ function runcesk(program_text) {
     execute(cesktest);
 }
 
-runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y)");
+runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
+runcesk("function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
