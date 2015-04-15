@@ -105,6 +105,21 @@ class CStr extends CVal {
     toString() { return `CStr(${this.value})`; }
 }
 
+class CSym extends CVal {
+    constructor(sym) { super(sym); }
+    toString() { return `CStr(${this.value})`; }
+}
+
+class CNull extends CVal {
+    constructor() { super(null); }
+    toString() { return `CNull()`; }
+}
+
+class CUndefined extends CVal {
+    constructor() { super(undefined); }
+    toString() { return `CUndefined()`; }
+}
+
 class CBuiltinFunc extends CVal {
     constructor(arity, fun) {
         super(fun);
@@ -134,26 +149,68 @@ function PutValue(ref, val, store) {
 }
 
 // 7.1.1
-function ToPrimitive(val, PreferredType) {
-    if (val.value === undefined)   { return val; }
-    else if (val.value === null)   { return val; }
-    else if (val instanceof CBool) { return val; }
-    else if (val instanceof CNum)  { return val; }
-    else if (val instanceof CStr)  { return val; }
-    return unimplemented(`ToPrimitive ${val.toString()}`);
+function ToPrimitive(input, PreferredType) {
+    if (input instanceof CUndefined) { return input; }
+    else if (input instanceof CNull) { return input; }
+    else if (input instanceof CBool) { return input; }
+    else if (input instanceof CNum)  { return input; }
+    else if (input instanceof CStr)  { return input; }
+    else if (input instanceof CSym)  { return input; }
+    else if (input instanceof CObject) {
+        let hint;
+        // 1. If PreferredType was not passed, let hint be "default".
+        if (!PreferredType)
+            hint = "default";
+        // 2. Else if PreferredType is hint String, let hint be "string".
+        // 3. Else PreferredType is hint Number, let hint be "number".
+        else
+            hint = PreferredType;
+        // 4. Let exoticToPrim be GetMethod(input, @@toPrimitive).
+        // 5. ReturnIfAbrupt(exoticToPrim).
+        let exoticToPrim = GetMethod(input, '@@toPrimitive'); // XXX
+        // 6. If exoticToPrim is not undefined, then
+        if (!(exoticToPrim instanceof CUndefined)) {
+            // a. Let result be Call(exoticToPrim, input, «hint»).
+            // b. ReturnIfAbrupt(result).
+            // c. If Type(result) is not Object, return result.
+            // d. Throw a TypeError exception.
+        }
+        // 7. If hint is "default", let hint be "number".
+        if (hint === "default")
+            hint = "number";
+        // 8. Return OrdinaryToPrimitive(input,hint).
+        return OrdinaryToPrimitive(input, hint);
+    }
+    return unimplemented(`ToPrimitive ${input.toString()}`);
+}
+
+function OrdinaryToPrimitive(input, hint) {
+    // 1. Assert: Type(O) is Object
+    // 2. Assert: Type(hint) is String and its value is either "string" or "number".
+    // 3. If hint is "string", then
+    // a. Let methodNames be «"toString", "valueOf"».
+    // 4. Else,
+    // a. Let methodNames be «"valueOf", "toString"».
+    // 5. For each name in methodNames in List order, do
+    // a. Let method be Get(O, name).
+    // b. ReturnIfAbrupt(method).
+    // c. If IsCallable(method) is true, then
+    // i. Let result be Call(method, O).
+    // ii. ReturnIfAbrupt(result).
+    // iii. If Type(result) is not Object, return result.
+    // 6. Throw a TypeError exception
+    return unimplemented("OrdinaryToPrimitive");
 }
 
 // 7.1.2
 function ToBoolean(val) {
     if (val instanceof CBool) { return val; }
-    else if (val.value === undefined) { return CBool.False; }
-    else if (val.value === null) { return CBool.False; }
+    else if (val instanceof CUndefined) { return CBool.False; }
+    else if (val instanceof CNull) { return CBool.False; }
     else if (val instanceof CNum) { return (isNaN(val.value) || val.value === 0) ? CBool.True : CBool.False; }
     else if (val instanceof CStr) { return val.value === "" ? CBool.True : CBool.False; }
     else if (val instanceof CObject) return CBool.True;
-    else
-        // XXX Symbol converts to true
-        return CBool.True;
+    else if (val instanceof CSym) return CBool.True;
     return unimplemented("ToBoolean");
 }
 
@@ -166,6 +223,14 @@ function ToNumber(val) {
     else if (val instanceof CNum) { return val; }
 
     return unimplemented("missing ToNumber() support");
+}
+
+// 7.1.12
+function ToString(argument) {
+    // we cheat here.  this won't work for our objects / symbols
+    if (argument instanceof CObject) return unimplemented("ToString(Object)");
+    if (argument instanceof CSym) return unimplemented("ToString(Symbol)");
+    return new CStr(String(argument.value));
 }
 
 // 7.2.11
@@ -200,9 +265,9 @@ function AbstractRelationalComparison(x, y, leftFirst) {
         let ny = ToNumber(py);
 
         // e. If nx is NaN, return undefined.
-        if (isNaN(nx.value)) return new CVal(undefined);
+        if (isNaN(nx.value)) return new CUndefined();
         // f. If ny is NaN, return undefined.
-        if (isNaN(ny.value)) return new CVal(undefined);
+        if (isNaN(ny.value)) return new CUndefined();
 
         // g. If nx and ny are the same Number value, return false.
         if (nx.value === ny.value) return CBool.False;
@@ -289,6 +354,37 @@ function StrictEqualityComparison(x, y) {
     return CBool.False;
 }
 
+// 7.3.1 Get (O, P)
+function Get (O, P) {
+    // 1. Assert: IsPropertyKey(P) is true.
+    // 2. Let O be ToObject(V).
+    // 3. ReturnIfAbrupt(O).
+    // 4. Return O.[[Get]](P, V).
+    return unimplemented("Get");
+}
+
+// 7.3.2 GetV (O, P)
+function GetV (O, P) {
+    // 1. Assert: IsPropertyKey(P) is true.
+    // 2. Let O be ToObject(V).
+    // 3. ReturnIfAbrupt(O).
+    // 4. Return O.[[Get]](P, V).
+    return unimplemented("GetV");
+}
+
+// 7.3.9 GetMethod (O, P)
+function GetMethod (O, P) {
+    // 1. Assert: IsPropertyKey(P) is true.
+    // 2. Let func be GetV(O, P).
+    // 3. ReturnIfAbrupt(func).
+    let func = GetV(O, P);
+    // 4. If func is either undefined or null, return undefined.
+    if ((func instanceof CUndefined) || (func instanceof CNull)) return new CUndefined();
+    // 5. If IsCallable(func) is false, throw a TypeError exception.
+    // 6. Return func.
+    return func;
+}
+
 // pointers (and frame pointers, which form our Environment), along with our Store
 let maxPointer = 0;
 function Pointer() {
@@ -342,8 +438,8 @@ class Store {
 
     get(addr) {
         if (addr.value === 0)
-            return new CVal(null);
-        return this._store[addr.value] || new CVal(undefined);
+            return new CNull();
+        return this._store[addr.value] || new CUndefined();
     }
     
     set(addr, val) {
@@ -850,7 +946,33 @@ class CESKBinaryExpression extends CESKExpression {
         let rref = this._right.eval(fp, store, kont);
         let rval = GetValue(rref, store);
         switch (this.operator) {
-        case '+': return new CNum(lval.value + rval.value);
+        case '+': {
+            // 7. Let lprim be ToPrimitive(lval).
+            // 8. ReturnIfAbrupt(lprim).
+            let lprim = ToPrimitive(lval);
+            // 9. Let rprim be ToPrimitive(rval).
+            // 10. ReturnIfAbrupt(rprim).
+            let rprim = ToPrimitive(rval);
+            // 11. If Type(lprim) is String or Type(rprim) is String, then
+            if ((lprim instanceof CStr) || (rprim instanceof CStr)) {
+                // a. Let lstr be ToString(lprim).
+                // b. ReturnIfAbrupt(lstr).
+                let lstr = ToString(lprim);
+                // c. Let rstr be ToString(rprim).
+                // d. ReturnIfAbrupt(rstr).
+                let rstr = ToString(rprim);
+                // e. Return the String that is the result of concatenating lstr and rstr.
+                return new CStr(lstr.value + rstr.value);
+            }
+            // 12. Let lnum be ToNumber(lprim).
+            // 13. ReturnIfAbrupt(lnum).
+            let lnum = ToNumber(lprim);
+            // 14. Let rnum be ToNumber(rprim).
+            // 15. ReturnIfAbrupt(rnum).
+            let rnum = ToNumber(rprim);
+            // 16. Return the result of applying the addition operation to lnum and rnum. See the Note below 12.7.5.
+            return new CNum(lnum.value + rnum.value);
+        }
         case '-': return new CNum(lval.value - rval.value);
         case '<': { 
             let r = AbstractRelationalComparison(lval, rval, true);
