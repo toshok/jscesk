@@ -78,13 +78,11 @@ class CObject extends CVal {
     }
     get(key, store) {
         // we assume that key is a CVal subclass here
-        try {
-            return this._env.getOffset(key.value);
-        }
-        catch (e) {
-            // the object didn't have that property, so we add it to the local env
-            return this._env.offset(key.value);
-        }
+        let off = this._env.getOffset(key.value, false);
+        if (off !== -1) return off;
+
+        // the object didn't have that property, so we add it to the local env
+        return this._env.offset(key.value);
     }
     toString() { return `CObject`; }
 }
@@ -308,11 +306,13 @@ class Environment {
     
     push() { return new Environment(this); }
 
-    getOffset(name) {
+    getOffset(name, throwIfNotFound=true) {
         for (let fr = this; fr != null; fr = fr._parent)
             if (name in fr._offsets)
                 return fr._offsets[name];
-        return error(`could not find ${name}`);
+        if (throwIfNotFound)
+            return error(`could not find ${name}`);
+        return -1;
     }
 
     setOffset(name, addr) {
