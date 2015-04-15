@@ -1017,6 +1017,18 @@ class CESKBinaryExpression extends CESKExpression {
     }
 }
 
+class CESKUnaryExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._argument = wrap(astnode.argument);
+    }
+    get operator() { return this._ast.operator; }
+    get argument() { return this._argument; }
+    eval(fp, store, kont) {
+        return unimplemented("CESKUnaryExpression.eval");
+    }
+}
+
 class CESKLogicalExpression extends CESKExpression {
     constructor(astnode) {
         super(astnode);
@@ -1027,7 +1039,7 @@ class CESKLogicalExpression extends CESKExpression {
     get left() { return this._left; }
     get right() { return this._right; }
     eval(fp, store, kont) {
-        debug("CESKBinaryExpression.eval");
+        debug("CESKLogicalExpression.eval");
         let lval = ToBoolean(GetValue(this._left.eval(fp, store, kont), store));
         let rval = ToBoolean(GetValue(this._right.eval(fp, store, kont), store));
         switch (this.operator) {
@@ -1255,7 +1267,7 @@ function wrap(astnode) {
     case b.ThisExpression: return unimplemented('ThisExpression');
     case b.ThrowStatement: return new CESKThrow(astnode);
     case b.TryStatement: return new CESKTry(astnode);
-    case b.UnaryExpression: return unimplemented('UnaryExpression');
+    case b.UnaryExpression: return new CESKUnaryExpression(astnode);
     case b.UpdateExpression: return unimplemented('UpdateExpression');
     case b.VariableDeclaration: return new CESKVariableDeclaration(astnode);
     case b.VariableDeclarator: return new CESKVariableDeclarator(astnode);
