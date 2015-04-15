@@ -1,12 +1,13 @@
 /* -*- Mode: js2; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
-import * as esprima from 'esprima-es6';
-import * as escodegen from 'escodegen-es6';
-import * as b from 'ast-builder';
+import * as esprima from './esprima-es6';
+import * as escodegen from './escodegen-es6';
+import * as b from './ast-builder';
 
 let print = console.log;
+let _debug = false;
 function debug(msg) {
-    //console.log(msg);
+    if (_debug) console.log(msg);
 }
 
 function unimplemented(msg) {
@@ -19,7 +20,7 @@ function warn_unimplemented(msg) {
 }
 
 function error(msg) {
-    debug(`ERROR: ${msg}`);
+    print(`ERROR: ${msg}`);
     throw new Error(msg);
 }
 
@@ -392,8 +393,30 @@ class Kont {
         this._next = next;
     }
     get next() { return this._next; }
+
+    // used by HandlerKont + throw
+    handle(thrown, store) {
+        return this.next.handle(thrown, store);
+    }
+    // used by AssignKont + return
+    apply(returnValue, store) {
+        return this.next.apply(returnValue, store);
+    }
+    // used by LeaveScopeKont + falling off a lexical scope
+    leaveScope(store) {
+        return this.next.leaveScope(store);
+    }
+    // used by LeaveHandlerKont + falling off a the end of a try block
+    leaveHandler(store) {
+        return this.next.leaveHandler(store);
+    }
 }
 
+// this continuation is matched with 'return' statements inside called
+// functions.  function calls register this continuation before
+// returning the State corresponding to the function's body, and when
+// the function returns, it apply's the current kont.  This bubbles up
+// the stack until we find the topmost AssignKont.
 class AssignKont extends Kont {
     constructor(name, stmt, fp, kont) {
         super(kont);
@@ -403,6 +426,8 @@ class AssignKont extends Kont {
     }
     get stmt() { return this._stmt; }
     get fp() { return this._fp; }
+
+    toString() { return "AssignKont"; }
 
     apply(returnValue, store) {
         let store_;
@@ -414,10 +439,79 @@ class AssignKont extends Kont {
     }
 }
 
+class LeaveScopeKont extends Kont {
+    constructor(stmt, fp, kont) {
+        super(kont);
+        this._stmt = stmt;
+        this._fp = fp;
+    }
+    get stmt() { return this._stmt; }
+    get fp() { return this._fp; }
+
+    toString() { return "LeaveScopeKont"; }
+
+    leaveScope(store) {
+        return new State(this._stmt, this._fp, store, this.next);
+    }
+}
+
+class HandlerKont extends Kont {
+    constructor(catchClause, fp, kont) {
+        super(kont);
+        this._fp = fp;
+        this._catchClause = catchClause;
+    }
+
+    get fp() { return this._fp; }
+    get catchClause() { return this._catchClause; }
+
+    toString() { return "HandlerKont"; }
+
+    handle(thrown, store) {
+        let catch_body = this._catchClause.body;
+        let fp_ = this._fp;
+        let store_ = store;
+        let kont_ = this.next;
+        
+        if (catch_body._leave_scope_ins) {
+            // if the catch block had a body at all we've already
+            // inserted the %leaveScope() instruction.  in that case,
+            // install a new environment with a single binding, and
+            // start stepping through the inside of the catch clause's
+            // block directly (note .body.body[0] instead of .body)
+
+            fp_ = new Environment();
+            store_ = Store.extend(store, fp_.offset(this._catchClause.param.name), thrown);
+            fp_._parent = this._fp;
+            kont_ = new LeaveScopeKont(catch_body._leave_scope_ins.nextStmt, this._fp, kont_);
+            return new State(this._catchClause.body.body[0], fp_, store_, kont_);
+        }
+
+        return new State(this._catchClause.body, fp_, store_, kont_);
+    }
+
+    leaveHandler(store) {
+        return new State(this._stmt, this._fp, store, this.next);
+    }
+}
+
 class HaltKont extends Kont {
     constructor() { super(null); }
+
+    toString() { return "HaltKont"; }
+
     apply(returnValue, store) {
         unimplemented("HaltKont.apply");
+    }
+    handle(thrown, store) {
+        print("unhandled exception!");
+        return new State(new CESKDone(), null, null, null);
+    }
+    leaveScope(store) {
+        unimplemented("HaltKont.leaveScope");
+    }
+    leaveHandler(store) {
+        unimplemented("HaltKont.leaveHandler");
     }
 }
 
@@ -431,7 +525,14 @@ class State {
         this.kont = kont;
     }
     next() {
-        debug(`State.next called, current stmt = ${this.stmt.type}`);
+        let kont_stack = "";
+        let k = this.kont;
+        while (k) {
+            kont_stack += k.toString() + " ";
+            k = k.next;
+        }
+        
+        debug(`State.next called, current stmt = ${this.stmt.type}, kont stack = ${kont_stack}`);
         return this.stmt.step(this.fp, this.store, this.kont);
     }
 
@@ -439,8 +540,13 @@ class State {
 }
 
 // ast wrapper nodes so we can associate methods with ast types
+let astNum = 0;
 class CESKAst {
-    constructor(astnode) { this._ast = astnode; }
+    constructor(astnode) {
+        this._ast = astnode;
+        this._id = astNum++;
+    }
+    get id() { return this._id; }
     get type() { return this._ast.type; }
     get nextStmt() { return this._nextStmt; }
 }
@@ -505,10 +611,28 @@ class CESKProgram extends CESKStatement {
     }
 }
 
+class CESKLeaveScope extends CESKStatement {
+    constructor() {
+        super(b.expressionStatement(b.callExpression(b.identifier("%leaveScope"), [])));
+    }
+    step(fp, store, kont) {
+        debug("CESKLeaveScope.step");
+        return kont.leaveScope(store);
+    }
+}
+
 class CESKBlockStatement extends CESKStatement {
     constructor(astnode) {
         super(astnode);
         this._body = astnode.body.map(wrap);
+        // if we're not dealing with an empty block statement, append
+        // a special "leave-scope" instruction to the end of the block
+        // that will unwind our stack to the corresponding LeaveScopeKont
+        // pushed onto the stack in step() below.
+        if (this.body.length > 0) {
+            this._leave_scope_ins = new CESKLeaveScope();
+            this.body.push(this._leave_scope_ins);
+        }
     }
     get body() { return this._body; }
 
@@ -516,9 +640,82 @@ class CESKBlockStatement extends CESKStatement {
         debug("CESKBlockStatement.step");
         // easy - we just skip to the first statement inside the block
         // (or the first one afterward if the block is empty)
-        return new State(this.nextStmt, fp, store, kont);
+        let kont_ = kont;
+        let fp_ = fp.push();
+        if (this._leave_scope_ins) {
+            kont_ = new LeaveScopeKont(this._leave_scope_ins.nextStmt, fp, kont);
+        }
+        return new State(this.nextStmt, fp_, store, kont_);
     }
 }
+
+class CESKLeaveHandler extends CESKStatement {
+    constructor() {
+        super(b.expressionStatement(b.callExpression(b.identifier("%leaveHandler"), [])));
+    }
+    step(fp, store, kont) {
+        debug("CESKLeaveHandler.step");
+        return kont.leaveHandler(store);
+    }
+}
+
+class CESKTry extends CESKStatement {
+    constructor(astnode) {
+        super(astnode);
+        this._block = wrap(astnode.block);
+        this._handlers = astnode.handlers.map(wrap);
+        this._finalizer = wrap(astnode.finalizer);
+        if (this.block.body.length > 0) {
+            this._leave_handler_ins = new CESKLeaveHandler();
+            this.block.body.push(this._leave_handler_ins);
+        }
+    }
+    get block() { return this._block; }
+    get handlers() { return this._handlers; }
+    get finalizer() { return this._finalizer; }
+
+    step(fp, store, kont) {
+        debug("CESKTry.step");
+        let kont_ = kont;
+        if (this._leave_handler_ins) {
+            debug("pushing handler kont");
+            kont_ = new HandlerKont(this.handlers[0], fp, kont_);
+            debug("pushing leave scope kont");
+            kont_ = new LeaveScopeKont(this._leave_handler_ins.nextStmt, fp, kont_);
+        }
+
+        return new State(this.nextStmt, fp, store, kont_);
+    }
+}
+
+class CESKCatchClause extends CESKAst {
+    constructor(astnode) {
+        super(astnode);
+        this._body = wrap(astnode.body);
+        this._param = wrap(astnode.param);
+        // XXX skip the guard stuff, mozilla-only extension
+    }
+    get param() { return this._param; }
+    get body() { return this._body; }
+
+    step(fp, store, kont) {
+        unimplemented("CESKCatchClause.step");
+    }
+}
+
+class CESKThrow extends CESKStatement {
+    constructor(astnode) {
+        super(astnode);
+        this._argument = wrap(astnode.argument);
+    }
+    get argument() { return this._argument; }
+
+    step(fp, store, kont) {
+        let thrown = GetValue(this.argument.eval(fp, store), store);
+        return kont.handle(thrown, store);
+    }
+}
+
 
 function callFunc(callee, args, name, nextStmt, fp, store, kont) {
     let callee_ = GetValue(callee.eval(fp, store, kont), store);
@@ -817,8 +1014,7 @@ class CESKIf extends CESKStatement {
         super(astnode);
         this._test = wrap(astnode.test);
         this._consequent = wrap(astnode.consequent);
-        if (astnode.alternate)
-            this._alternate = wrap(astnode.alternate);
+        this._alternate = wrap(astnode.alternate);
     }
     get test() { return this._test; }
     get consequent() { return this._consequent; }
@@ -877,6 +1073,8 @@ class CESKDone extends CESKStatement {
 }
 
 function wrap(astnode) {
+    if (!astnode) return astnode;
+
     switch(astnode.type) {
     case b.ArrayExpression: return new CESKArrayExpression(astnode);
     case b.ArrayPattern: return unimplemented('ArrayPattern');
@@ -886,7 +1084,7 @@ function wrap(astnode) {
     case b.BlockStatement: return new CESKBlockStatement(astnode);
     case b.BreakStatement: return unimplemented('BreakStatement');
     case b.CallExpression: return new CESKCallExpression(astnode);
-    case b.CatchClause: return unimplemented('CatchClause');
+    case b.CatchClause: return new CESKCatchClause(astnode);
     case b.ClassBody: return unimplemented('ClassBody');
     case b.ClassDeclaration: return unimplemented('ClassDeclaration');
     case b.ClassExpression: return unimplemented('ClassExpression');
@@ -932,8 +1130,8 @@ function wrap(astnode) {
     case b.TemplateElement: return unimplemented('TemplateElement');
     case b.TemplateLiteral: return unimplemented('TemplateLiteral');
     case b.ThisExpression: return unimplemented('ThisExpression');
-    case b.ThrowStatement: return unimplemented('ThrowStatement');
-    case b.TryStatement: return unimplemented('TryStatement');
+    case b.ThrowStatement: return new CESKThrow(astnode);
+    case b.TryStatement: return new CESKTry(astnode);
     case b.UnaryExpression: return unimplemented('UnaryExpression');
     case b.UpdateExpression: return unimplemented('UpdateExpression');
     case b.VariableDeclaration: return new CESKVariableDeclaration(astnode);
@@ -989,6 +1187,11 @@ function assignNext(stmt, next) {
     else if (stmt.type === b.ContinueStatement) {
         unimplemented("we don't handle break/continue yet");
     }
+    else if (stmt.type === b.TryStatement) {
+        assignNext(stmt.handlers[0].body, next);
+        assignNext(stmt.block, next);
+        stmt._nextStmt = stmt.block.body[0];
+    }
     else {
         stmt._nextStmt = next;
     }
@@ -1026,20 +1229,70 @@ function execute(toplevel) {
     }
 }
 
+function dumpStatements(ast, indent = 0) {
+    if (!ast) return;
+    switch(ast.type) {
+    case b.Program:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        ast.body.forEach((el) => dumpStatements(el, indent + 2));
+        break;
+    case b.BlockStatement:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        ast.body.forEach((el) => dumpStatements(el, indent + 2));
+        break;
+    case b.IfStatement:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent+2)}then:`);
+        dumpStatements(ast.consequent, indent + 2);
+        console.log(`${" ".repeat(indent+2)}else:`);
+        dumpStatements(ast.alternate, indent + 2);
+        break;
+    case b.WhileStatement:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        dumpStatements(ast.body, indent + 2);
+        break;
+    case b.TryStatement:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        dumpStatements(ast.block, indent + 2);
+        if (ast.handlers.length > 0) {
+            console.log(`${" ".repeat(indent+2)}catch:`);
+            dumpStatements(ast.handlers[0], indent + 2);
+        }
+        if (ast.finalizer) {
+            console.log(`${" ".repeat(indent+2)}finally:`);
+            dumpStatements(ast.finalizer, indent + 2);
+        }
+        break;
+    case b.CatchClause:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        dumpStatements(ast.body, indent + 1);
+        break;
+    case b.ExpressionStatement:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type} ${escodegen.generate(ast._ast)}`);
+        break;
+    default:
+        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        break;
+    }
+}
 
 function runcesk(name, program_text) {
     var test = esprima.parse(program_text);
     var cesktest = wrap(test);
     assignNext(cesktest, new CESKDone());
     cesktest = toANF(cesktest);
+    if (_debug) dumpStatements(cesktest);
     console.time(name);
     execute(cesktest);
     console.timeEnd(name);
 }
 
 runcesk("func-call", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
+
 runcesk("if1", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
+
 runcesk("loop1", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let z = 0; while (z < y) { let unused = print(z); z = z + 1; }");
+
 runcesk("rfib", `
 function fib(n) {
     if (n === 0) return 1;
@@ -1055,6 +1308,7 @@ function fib(n) {
 let fib8 = fib(8);
 let unused = print(fib8);
 `);
+
 runcesk("ifib", `
 function fib(n) {
     if (n < 2) return 1;
@@ -1073,16 +1327,39 @@ function fib(n) {
 let fib8 = fib(8);
 let unused = print(fib8);
 `);
+
 runcesk("obj1", `
 let x = {};
 `);
+
 runcesk("member1", `
 let x = {};
 let unused = print(x);
 `);
+
 runcesk("member2", `
 let x = {};
 x.bar = 5;
 let bar = x.bar;
 let unused = print(bar);
+`);
+
+runcesk("scope1", `
+let a = "hello, world";
+{
+    let a = "goodbye, world";
+    let unused = print(a);
+}
+let unused = print(a);
+`);
+
+runcesk("try1", `
+let e = "hello, world";
+try {
+  throw "goodbye, world";
+}
+catch (e) {
+  let unused = print(e);
+}
+let unused = print(e);
 `);
