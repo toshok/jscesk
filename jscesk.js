@@ -1,8 +1,9 @@
 /* -*- Mode: js2; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
-import * as esprima from './esprima-es6';
+import * as esprima from   './esprima-es6';
 import * as escodegen from './escodegen-es6';
-import * as b from './ast-builder';
+import * as b from         './ast-builder';
+import * as fs from        '@node-compat/fs';
 
 let print = console.log;
 let _debug = false;
@@ -1282,84 +1283,16 @@ function runcesk(name, program_text) {
     assignNext(cesktest, new CESKDone());
     cesktest = toANF(cesktest);
     if (_debug) dumpStatements(cesktest);
-    console.time(name);
+    let timer = `runcesk ${name}`;
+    console.time(timer);
     execute(cesktest);
-    console.timeEnd(name);
+    console.timeEnd(timer);
 }
 
-runcesk("func-call", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let unused = print(y);");
+if (process.argv.length === 1)
+    error("must specify test to run on command line, ex: ./jscesk.exe tests/func-call.js");
 
-runcesk("if1", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); if (y < 10) { let unused = print(y); } else { let unused = print(10); }");
+let test_file = process.argv[1];
+let test_contents = fs.readFileSync(test_file, 'utf-8');
 
-runcesk("loop1", "function toplevel() { let x = 5 + 6; return x; } let y = toplevel(); let z = 0; while (z < y) { let unused = print(z); z = z + 1; }");
-
-runcesk("rfib", `
-function fib(n) {
-    if (n === 0) return 1;
-    if (n === 1) return 1;
-
-    let n_1 = n-1;
-    let n_2 = n-2;
-    let fib_1 = fib(n_1);
-    let fib_2 = fib(n_2);
-    let rv = fib_1 + fib_2;
-    return rv;
-}
-let fib8 = fib(8);
-let unused = print(fib8);
-`);
-
-runcesk("ifib", `
-function fib(n) {
-    if (n < 2) return 1;
-    n = n - 2;
-    let i = 0;
-    let fib1 = 1;
-    let fib2 = 1;
-    while (i <= n) {
-        let nfib = fib1 + fib2;
-        fib1 = fib2;
-        fib2 = nfib;
-        i = i + 1;
-    }
-    return fib2;
-}
-let fib8 = fib(8);
-let unused = print(fib8);
-`);
-
-runcesk("obj1", `
-let x = {};
-`);
-
-runcesk("member1", `
-let x = {};
-let unused = print(x);
-`);
-
-runcesk("member2", `
-let x = {};
-x.bar = 5;
-let bar = x.bar;
-let unused = print(bar);
-`);
-
-runcesk("scope1", `
-let a = "hello, world";
-{
-    let a = "goodbye, world";
-    let unused = print(a);
-}
-let unused = print(a);
-`);
-
-runcesk("try1", `
-let e = "hello, world";
-try {
-  throw "goodbye, world";
-}
-catch (e) {
-  let unused = print(e);
-}
-let unused = print(e);
-`);
+runcesk(test_file, test_contents);

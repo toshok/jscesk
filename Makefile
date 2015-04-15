@@ -1,6 +1,5 @@
 
-jscesk.exe: jscesk.js
-	ejs --srcdir -o $@ $<
+EJSDIR?=/Users/toshok/src/coffeekit/echo-js
 
-check: jscesk.exe
-	./jscesk.exe
+jscesk.exe: jscesk.js
+	$(EJSDIR)/ejs --srcdir --moduledir $(EJSDIR)/node-compat -o $@ $<
