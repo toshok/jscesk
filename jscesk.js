@@ -95,6 +95,13 @@ class CArray extends CObject {
     toString() { return `CArray`; }
 }
 
+class CFunction extends CVal /* CObject */ {
+    constructor(val) {
+        super(val);
+    }
+    toString() { return `CFunction ${this.value.id ? this.value.id.name : "anon"}`; }
+}
+
 class CNum extends CVal {
     constructor(num) { super(num); }
     toString() { return `CNum(${this.value})`; }
@@ -428,7 +435,18 @@ class Environment {
          return this._offset - 1;
          */
     }
-    toString() { return `Environment(${this.value})`; }
+    toString() {
+        let e = this;
+        let str = `Environment(`;
+        while (e) {
+            if (e != this) str += "\n------";
+            for (let name in e._offsets) {
+                str += `\n   ${name} = ${this._offsets[name]}`;
+            }
+            e = e._parent;
+        }
+        return str + ")";
+    }
 }
 
 class Store {
@@ -641,9 +659,9 @@ let astNum = 0;
 class CESKAst {
     constructor(astnode) {
         this._ast = astnode;
-        this._id = astNum++;
+        this._astid = astNum++;
     }
-    get id() { return this._id; }
+    get astid() { return this._astid; }
     get type() { return this._ast.type; }
     get nextStmt() { return this._nextStmt; }
 }
@@ -665,24 +683,46 @@ class CESKFunctionDeclaration extends CESKStatement {
     }
     get params() { return this._ast.params; }
     get body() { return this._body; }
+    get id() { return this._ast.id; }
     get name() { return this._ast.id.name; }
     
     step(fp, store, kont) {
         debug(`CESKFunctionDeclaration(${this.name}).step`);
         debug(`  offset = ${fp.offset(this.name)}`);
+        debug(`  environment = ${fp.toString()}`);
         // a function declaration extends the local environment with a
         // mapping from the function's name to the function.
-        let store_ = Store.extend(store, fp.offset(this.name), this);
-        debug (`after extend, store is ${store_.toString()}`);
+        this._fp = fp;
+        let store_ = Store.extend(store, fp.offset(this.name), new CFunction(this));
         return new State(this.nextStmt, fp, store_, kont);
     }
     toString() { return `CESKFunctionDeclaration(${this.name}, ${escodegen.generate(this._ast.body)})`; }
 }
 
+class CESKFunctionExpression extends CESKExpression {
+    constructor(astnode) {
+        super(astnode);
+        this._body = wrap(astnode.body);
+        this._params = astnode.params.map(wrap);
+        // name
+        assignNext(this.body, null);
+    }
+    get params() { return this._ast.params; }
+    get body() { return this._body; }
+    get id() { return this._ast.id; }
+    get name() { return this._ast.id.name; }
+    
+    eval(fp, store, kont) {
+        this._fp = fp;
+        return new CFunction(this);
+    }
+    toString() { return `CESKFunctionExpression(${this.name}, ${escodegen.generate(this._ast.body)})`; }
+}
+
 class CESKReturn extends CESKStatement {
     constructor(astnode) {
         super(astnode);
-        this._argument = wrap(astnode.argument);
+        this._argument = wrap(astnode.argument) || new CUndefined();
     }
     get body() { return this._body; }
 
@@ -823,30 +863,31 @@ function callFunc(callee, args, name, nextStmt, fp, store, kont) {
         let kont_ = new AssignKont(name, nextStmt, fp, kont);
         return kont_.apply(callee_.value.apply(undefined, js_args), store);
     }
-    // pretty bad check for "is this a function?", but it'll do for now
-    else if (!callee_.body) {
-        debug(callee_.toString());
-        return error("callee is not a function");
-    }
-    else {
-        debug("calling JS function");
+    else if (callee_ instanceof CFunction) {
+        let calleeFunc = callee_.value;
+        debug(`calling JS function ${callee_.toString()}`);
+        debug(`in context of environment: ${calleeFunc._fp.toString()}`);
         // allocate a new frame
         let fp_ = new Environment();
 
         let store_ = Store.clone(store);
         args.forEach((arg, n) => {
             let argval = GetValue(arg.eval(fp, store, kont), store);
-            if (n < callee_.params.length) {
-                store_._extend(fp_.offset(callee_.params[n].name), argval);
-                debug(`${n} ${callee_.params[n].name} = ${GetValue(fp_.offset(callee_.params[n].name), store)}`);
+            if (n < calleeFunc.params.length) {
+                store_._extend(fp_.offset(calleeFunc.params[n].name), argval);
+                debug(`${n} ${calleeFunc.params[n].name} = offset ${fp_.offset(calleeFunc.params[n].name)} ${GetValue(fp_.offset(calleeFunc.params[n].name), store_)}`);
             }
         });
         
 
-        fp_._parent = fp;
+        fp_._parent = calleeFunc._fp;
 
         let kont_ = new AssignKont(name, nextStmt, fp, kont);
-        return new State(callee_.body, fp_, store_, kont_);
+        return new State(calleeFunc._body, fp_, store_, kont_);
+    }
+    else {
+        debug(callee_.toString());
+        return error("callee is not a function");
     }
 }
     
@@ -973,6 +1014,28 @@ class CESKBinaryExpression extends CESKExpression {
             // 16. Return the result of applying the addition operation to lnum and rnum. See the Note below 12.7.5.
             return new CNum(lnum.value + rnum.value);
         }
+        case '%': case '/': case '*': {
+            //print("multiplicative expression!");
+            // 1. Let left be the result of evaluating MultiplicativeExpression.
+            // 2. Let leftValue be GetValue(left).
+            // 3. ReturnIfAbrupt(leftValue).
+            // 4. Let right be the result of evaluating UnaryExpression.
+            // 5. Let rightValue be GetValue(right).
+            // 6. Let lnum be ToNumber(leftValue).
+            // 7. ReturnIfAbrupt(lnum).
+            let lnum = ToNumber(lval);
+            // 8. Let rnum be ToNumber(rightValue).
+            // 9. ReturnIfAbrupt(rnum).
+            let rnum = ToNumber(rval);
+            // 10. Return the result of applying the
+            //     MultiplicativeOperator (*, /, or %) to lnum and rnum as
+            //     specified in 12.6.3.1, 12.6.3.2, or 12.6.3.3.
+            switch (this.operator) {
+            case '*': return new CNum(lnum.value * rnum.value);
+            case '/': return new CNum(lnum.value / rnum.value);
+            case '%': /*print(`${lnum.value} % ${rnum.value} = ${lnum.value % rnum.value}`);*/ return new CNum(lnum.value % rnum.value);
+            }
+        }
         case '-': return new CNum(lval.value - rval.value);
         case '<': { 
             let r = AbstractRelationalComparison(lval, rval, true);
@@ -1025,7 +1088,20 @@ class CESKUnaryExpression extends CESKExpression {
     get operator() { return this._ast.operator; }
     get argument() { return this._argument; }
     eval(fp, store, kont) {
-        return unimplemented("CESKUnaryExpression.eval");
+        switch (this.operator) {
+        case '!': {
+            // 1. Let expr be the result of evaluating UnaryExpression.
+            let expr = this._argument.eval(fp, store, kont);
+            // 2. Let oldValue be ToBoolean(GetValue(expr)).
+            // 3. ReturnIfAbrupt(oldValue).
+            let oldValue = GetValue(expr, store);
+            // 4. If oldValue is true, return false.
+            if (oldValue === CBool.True) return CBool.False;
+            // 5. Return true.
+            return CBool.True;
+        }
+        default: return unimplemented(`unrecognized unary operation: ${this.operator}`);
+        }
     }
 }
 
@@ -1094,8 +1170,9 @@ class CESKLiteral extends CESKExpression {
 
     eval(fp, store, kont) {
         debug("CESKLiteral.eval");
-        if (typeof(this._ast.value) === "number")
+        if (typeof(this._ast.value) === "number") {
             return new CNum(this._ast.value);
+        }
         else if (typeof(this._ast.value) === "string")
             return new CStr(this._ast.value);
         else if (typeof(this._ast.value) === "boolean")
@@ -1240,7 +1317,7 @@ function wrap(astnode) {
     case b.ForOfStatement: return unimplemented('ForOfStatement');
     case b.ForStatement: return unimplemented('ForStatement');
     case b.FunctionDeclaration: return new CESKFunctionDeclaration(astnode);
-    case b.FunctionExpression: return unimplemented('FunctionExpression');
+    case b.FunctionExpression: return new CESKFunctionExpression(astnode);
     case b.Identifier: return new CESKIdentifier(astnode);
     case b.IfStatement: return new CESKIf(astnode);
     case b.ImportDeclaration: return unimplemented('ImportDeclaration');
@@ -1310,6 +1387,9 @@ function assignNext(stmt, next) {
         assignNext(stmt.body, null);
         stmt._nextStmt = next;
     }
+    else if (stmt.type === b.FunctionExpression) {
+        assignNext(stmt.body, null);
+    }
     else if (stmt.type === b.ReturnStatement) {
         stmt._nextStmt = null;
     }
@@ -1334,6 +1414,7 @@ function assignNext(stmt, next) {
 
 function initES6Env(fp0, store0) {
     store0._extend(fp0.offset("print"), new CBuiltinFunc(1, function _print(x) { console.log(x); }));
+    store0._extend(fp0.offset("undefined"), new CUndefined());
 
     let object_prototype = new CObject(Store.NullPointer, store0);
     store0._extend(fp0.offset("%ObjectPrototype%"), object_prototype);
@@ -1368,26 +1449,26 @@ function dumpStatements(ast, indent = 0) {
     if (!ast) return;
     switch(ast.type) {
     case b.Program:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         ast.body.forEach((el) => dumpStatements(el, indent + 2));
         break;
     case b.BlockStatement:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         ast.body.forEach((el) => dumpStatements(el, indent + 2));
         break;
     case b.IfStatement:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         console.log(`${" ".repeat(indent+2)}then:`);
         dumpStatements(ast.consequent, indent + 2);
         console.log(`${" ".repeat(indent+2)}else:`);
         dumpStatements(ast.alternate, indent + 2);
         break;
     case b.WhileStatement:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         dumpStatements(ast.body, indent + 2);
         break;
     case b.TryStatement:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         dumpStatements(ast.block, indent + 2);
         if (ast.handlers.length > 0) {
             console.log(`${" ".repeat(indent+2)}catch:`);
@@ -1399,14 +1480,14 @@ function dumpStatements(ast, indent = 0) {
         }
         break;
     case b.CatchClause:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         dumpStatements(ast.body, indent + 1);
         break;
     case b.ExpressionStatement:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type} ${escodegen.generate(ast._ast)}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type} ${escodegen.generate(ast._ast)}`);
         break;
     default:
-        console.log(`${" ".repeat(indent)}${ast.id}: ${ast.type}`);
+        console.log(`${" ".repeat(indent)}${ast.astid}: ${ast.type}`);
         break;
     }
 }
@@ -1423,10 +1504,18 @@ function runcesk(name, program_text) {
     console.timeEnd(timer);
 }
 
-if (process.argv.length === 1)
+let args = process.argv.slice();
+args.shift(); // get rid of argv0
+
+if (args.length > 0 && args[0] == '-d') {
+    args.shift(); // get rid of -d
+    _debug = true;
+}
+    
+if (args.length === 0)
     error("must specify test to run on command line, ex: ./jscesk.exe tests/func-call.js");
 
-let test_file = process.argv[1];
+let test_file = args[0];
 let test_contents = fs.readFileSync(test_file, 'utf-8');
 
 runcesk(test_file, test_contents);
