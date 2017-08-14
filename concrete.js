@@ -35,7 +35,7 @@ export class CObject extends CVal {
         super(Object.create(null));
         this._proto = proto_addr;
         this._env = new Environment(proto.value ? proto.value._env : null);
-        this._env.setOffset("__proto__", proto_addr);
+        this._env.setOffset('__proto__', proto_addr);
     }
     get proto() { return this._proto; }
     set(key, value, store) {
@@ -54,21 +54,21 @@ export class CObject extends CVal {
         // the object didn't have that property, so we add it to the local env
         return this._env.offset(key.value);
     }
-    toString() { return `CObject`; }
+    toString() { return 'CObject'; }
 }
 
 export class CArray extends CObject {
     constructor(val) {
         super(val);
     }
-    toString() { return `CArray`; }
+    toString() { return 'CArray'; }
 }
 
 export class CFunction extends CVal /* CObject */ {
     constructor(val) {
         super(val);
     }
-    toString() { return `CFunction ${this.value.id ? this.value.id.name : "anon"}`; }
+    toString() { return `CFunction ${this.value.id ? this.value.id.name : 'anon'}`; }
 }
 
 export class CNum extends CVal {
@@ -88,12 +88,12 @@ export class CSym extends CVal {
 
 export class CNull extends CVal {
     constructor() { super(null); }
-    toString() { return `CNull()`; }
+    toString() { return 'CNull()'; }
 }
 
 export class CUndefined extends CVal {
     constructor() { super(undefined); }
-    toString() { return `CUndefined()`; }
+    toString() { return 'CUndefined()'; }
 }
 
 export class CBuiltinFunc extends CVal {

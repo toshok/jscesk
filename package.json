@@ -1,0 +1,28 @@
+{
+  "name": "jscesk",
+  "version": "1.0.0",
+  "description": "a CESK machine for JS",
+  "main": "jscesk.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toshok/jscesk.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/toshok/jscesk/issues"
+  },
+  "homepage": "https://github.com/toshok/jscesk#readme",
+  "dependencies": {
+    "babel-preset-env": "^1.5.1"
+  },
+  "devDependencies": {
+    "eslint": "^3.19.0"
+  }
+}

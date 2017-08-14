@@ -15,11 +15,11 @@ export class Store {
     
     set(addr, val) {
         if (addr.value === 0)
-            error("can't set NullPointer's value");
+            error(`can't set NullPointer's value`);
         if (addr.value in this._store)
             this._store[addr.value] = val;
         else
-            unimplemented("set() of addr not in store");
+            unimplemented('set() of addr not in store');
     }
 
     // in-place extend, used to populate the initial environment, and
@@ -43,11 +43,11 @@ export class Store {
     }
     
     toString() {
-        let rv = "Store(\n";
+        let rv = 'Store(\n';
         for (let k of Object.getOwnPropertyNames(this._store)) {
             rv += `  ${k} -> ${this._store[k]}\n`;
         }
-        rv += ")";
+        rv += ')';
         return rv;
     }
 

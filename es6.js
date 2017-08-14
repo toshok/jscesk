@@ -18,7 +18,7 @@ export function PutValue(ref, val, store) {
         return;
     }
 
-    error ("PutValue passed non-ref first arg");
+    error ('PutValue passed non-ref first arg');
 }
 
 // 7.1.1
@@ -33,7 +33,7 @@ export function ToPrimitive(input, PreferredType) {
         let hint;
         // 1. If PreferredType was not passed, let hint be "default".
         if (!PreferredType)
-            hint = "default";
+            hint = 'default';
         // 2. Else if PreferredType is hint String, let hint be "string".
         // 3. Else PreferredType is hint Number, let hint be "number".
         else
@@ -49,15 +49,15 @@ export function ToPrimitive(input, PreferredType) {
             // d. Throw a TypeError exception.
         }
         // 7. If hint is "default", let hint be "number".
-        if (hint === "default")
-            hint = "number";
+        if (hint === 'default')
+            hint = 'number';
         // 8. Return OrdinaryToPrimitive(input,hint).
         return OrdinaryToPrimitive(input, hint);
     }
     return unimplemented(`ToPrimitive ${input.toString()}`);
 }
 
-function OrdinaryToPrimitive(input, hint) {
+function OrdinaryToPrimitive(/*input, hint*/) {
     // 1. Assert: Type(O) is Object
     // 2. Assert: Type(hint) is String and its value is either "string" or "number".
     // 3. If hint is "string", then
@@ -72,7 +72,7 @@ function OrdinaryToPrimitive(input, hint) {
     // ii. ReturnIfAbrupt(result).
     // iii. If Type(result) is not Object, return result.
     // 6. Throw a TypeError exception
-    return unimplemented("OrdinaryToPrimitive");
+    return unimplemented('OrdinaryToPrimitive');
 }
 
 // 7.1.2
@@ -81,10 +81,10 @@ export function ToBoolean(val) {
     else if (val instanceof CUndefined) { return CBool.False; }
     else if (val instanceof CNull) { return CBool.False; }
     else if (val instanceof CNum) { return (isNaN(val.value) || val.value === 0) ? CBool.True : CBool.False; }
-    else if (val instanceof CStr) { return val.value === "" ? CBool.True : CBool.False; }
+    else if (val instanceof CStr) { return val.value === '' ? CBool.True : CBool.False; }
     else if (val instanceof CObject) return CBool.True;
     else if (val instanceof CSym) return CBool.True;
-    return unimplemented("ToBoolean");
+    return unimplemented('ToBoolean');
 }
 
 
@@ -95,14 +95,14 @@ export function ToNumber(val) {
     else if (val instanceof CBool) { return new CNum(val.value ? 1 : 0); }
     else if (val instanceof CNum) { return val; }
 
-    return unimplemented("missing ToNumber() support");
+    return unimplemented('missing ToNumber() support');
 }
 
 // 7.1.12
 export function ToString(argument) {
     // we cheat here.  this won't work for our objects / symbols
-    if (argument instanceof CObject) return unimplemented("ToString(Object)");
-    if (argument instanceof CSym) return unimplemented("ToString(Symbol)");
+    if (argument instanceof CObject) return unimplemented('ToString(Object)');
+    if (argument instanceof CSym) return unimplemented('ToString(Symbol)');
     return new CStr(String(argument.value));
 }
 
@@ -128,7 +128,7 @@ export function AbstractRelationalComparison(x, y, leftFirst) {
         // d. Let m be the integer that is the code unit value at index k within px.
         // e. Let n be the integer that is the code unit value at index k within py.
         // f. If m < n, return true. Otherwise, return false.
-        return unimplemented("string relation");
+        return unimplemented('string relation');
     }
     // 6. Else,
     else {
@@ -168,7 +168,7 @@ export function AbstractRelationalComparison(x, y, leftFirst) {
 }
 
 // 7.2.12
-export function AbstractEqualityComparison(x, y) {
+export function AbstractEqualityComparison(/*x, y*/) {
     // 3. If Type(x) is the same as Type(y), then
     // a. Return the result of performing Strict Equality Comparison x === y.
     // 4. If x is null and y is undefined, return true.
@@ -220,29 +220,29 @@ export function StrictEqualityComparison(x, y) {
         // b. Else, return false.
         return CBool.False;
     }
-    return unimplemented("StrictEq not finished");
+    return unimplemented('StrictEq not finished');
     // 7. If x and y are the same Symbol value, return true.
     // 8. If x and y are the same Object value, return true.
     // 9. Return false.
-    return CBool.False;
+    //return CBool.False;
 }
 
 // 7.3.1 Get (O, P)
-function Get (O, P) {
+function Get (/*O, P*/) {
     // 1. Assert: IsPropertyKey(P) is true.
     // 2. Let O be ToObject(V).
     // 3. ReturnIfAbrupt(O).
     // 4. Return O.[[Get]](P, V).
-    return unimplemented("Get");
+    return unimplemented('Get');
 }
 
 // 7.3.2 GetV (O, P)
-function GetV (O, P) {
+function GetV (/*O, P*/) {
     // 1. Assert: IsPropertyKey(P) is true.
     // 2. Let O be ToObject(V).
     // 3. ReturnIfAbrupt(O).
     // 4. Return O.[[Get]](P, V).
-    return unimplemented("GetV");
+    return unimplemented('GetV');
 }
 
 // 7.3.9 GetMethod (O, P)
@@ -259,12 +259,12 @@ function GetMethod (O, P) {
 }
 
 export function initES6Env(fp0, store0) {
-    store0._extend(fp0.offset("print"), new CBuiltinFunc(1, function _print(x) { console.log(x); }));
-    store0._extend(fp0.offset("undefined"), new CUndefined());
+    store0._extend(fp0.offset('print'), new CBuiltinFunc(1, function _print(x) { console.log(x); }));
+    store0._extend(fp0.offset('undefined'), new CUndefined());
 
     let object_prototype = new CObject(Store.NullPointer, store0);
-    store0._extend(fp0.offset("%ObjectPrototype%"), object_prototype);
-    object_prototype.set(new CStr("hasOwnProperty"), new CBuiltinFunc(1, function _hasOwnProperty(self, needle) { unimplemented("builtin-hasOwnProperty"); }), store0);
-    object_prototype.set(new CStr("toString"), new CBuiltinFunc(1, function _toString(self) { print("[object Object]"); }), store0);
+    store0._extend(fp0.offset('%ObjectPrototype%'), object_prototype);
+    object_prototype.set(new CStr('hasOwnProperty'), new CBuiltinFunc(1, function _hasOwnProperty(/*self, needle*/) { unimplemented('builtin-hasOwnProperty'); }), store0);
+    object_prototype.set(new CStr('toString'), new CBuiltinFunc(1, function _toString(/*self*/) { print('[object Object]'); }), store0);
 }
 

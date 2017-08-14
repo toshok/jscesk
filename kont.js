@@ -45,7 +45,7 @@ export class AssignKont extends Kont {
     get stmt() { return this._stmt; }
     get fp() { return this._fp; }
 
-    toString() { return "AssignKont"; }
+    toString() { return 'AssignKont'; }
 
     apply(returnValue, store) {
         let store_;
@@ -66,7 +66,7 @@ export class LeaveScopeKont extends Kont {
     get stmt() { return this._stmt; }
     get fp() { return this._fp; }
 
-    toString() { return "LeaveScopeKont"; }
+    toString() { return 'LeaveScopeKont'; }
 
     leaveScope(store) {
         return new State(this._stmt, this._fp, store, this.next);
@@ -83,7 +83,7 @@ export class HandlerKont extends Kont {
     get fp() { return this._fp; }
     get catchClause() { return this._catchClause; }
 
-    toString() { return "HandlerKont"; }
+    toString() { return 'HandlerKont'; }
 
     handle(thrown, store) {
         let catch_body = this._catchClause.body;
@@ -116,19 +116,19 @@ export class HandlerKont extends Kont {
 export class HaltKont extends Kont {
     constructor() { super(null); }
 
-    toString() { return "HaltKont"; }
+    toString() { return 'HaltKont'; }
 
     apply(returnValue, store) {
-        unimplemented("HaltKont.apply");
+        unimplemented('HaltKont.apply');
     }
     handle(thrown, store) {
-        print("unhandled exception!");
+        print('unhandled exception!');
         return new State(new CESKDone(), null, null, null);
     }
     leaveScope(store) {
-        unimplemented("HaltKont.leaveScope");
+        unimplemented('HaltKont.leaveScope');
     }
     leaveHandler(store) {
-        unimplemented("HaltKont.leaveHandler");
+        unimplemented('HaltKont.leaveHandler');
     }
 }

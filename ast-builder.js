@@ -66,29 +66,29 @@ export const WhileStatement = 'WhileStatement';
 export const WithStatement = 'WithStatement';
 export const YieldExpression = 'YieldExpression';
 
-function isNotNull(n) { if (!n) throw new Error("assertion failed: value is null or undefined"); return true; };
+function isNotNull(n) { if (!n) throw new Error('assertion failed: value is null or undefined'); return true; };
 function hasType(n)   { if (!n.type) throw new Error(`assertion failed: value ${JSON.stringify(n)} does not have a 'type:' property`); return true; };
 
 function isast (n) {
     return (isNotNull(n) &&
-	        hasType(n) &&
-	        n);
+            hasType(n) &&
+            n);
 }
 
 function isnullableast (n) {
     return ((!n || hasType(n)) &&
-	        n);
+            n);
 }
 
 function isastarray (n) {
-    if (!Array.isArray(n)) throw new Error("value must be an array");
+    if (!Array.isArray(n)) throw new Error('value must be an array');
     for (let el of n)
         isast(el);
     return n;
 }
 
 function isnullableastarray (n) {
-    if (!Array.isArray(n)) throw new Error("value must be an array");
+    if (!Array.isArray(n)) throw new Error('value must be an array');
     for (let el of n)
         isnullableast(el);
     return n;
@@ -115,12 +115,12 @@ export function functionExpression    (id, params, body, defaults=[], rest=null)
 export function identifier            (name) { return { type: Identifier, name: name }; }
 export function ifStatement           (test, consequent, alternate) { return { type: IfStatement, test: isast(test), consequent: isast(consequent), alternate: isnullableast(alternate) }; }
 export function labeledStatement      (label, body) { return { type: LabeledStatement, label: isast(label), body: body.map(isast) }; }
-export function literal               (val) { return { type: Literal, value: val, raw: typeof(val) === "string" ? `\"${val}\"` : `${val}` }; }
+export function literal               (val) { return { type: Literal, value: val, raw: typeof(val) === 'string' ? `\"${val}\"` : `${val}` }; }
 export function logicalExpression     (l, op, r) { return { type: LogicalExpression, left: isast(l), right: isast(r), operator: op }; }
 export function memberExpression      (obj, prop, computed = false) { return { type: MemberExpression, object: isast(obj), property: isast(prop), computed: computed }; }
-export function methodDefinition      (key, value, kind = "init") { return { type: MethodDefinition, key: key, value: value, kind: kind }; }
+export function methodDefinition      (key, value, kind = 'init') { return { type: MethodDefinition, key: key, value: value, kind: kind }; }
 export function objectExpression      (properties) { return { type: ObjectExpression, properties: properties.map(isast) }; }
-export function property              (key, value, kind = "init") { return { type: Property, key: isast(key), value: isast(value), kind: kind }; }
+export function property              (key, value, kind = 'init') { return { type: Property, key: isast(key), value: isast(value), kind: kind }; }
 export function returnStatement       (arg) { return { type: ReturnStatement, argument: isast(arg) }; }
 export function sequenceExpression    (expressions) { return { type: SequenceExpression, expressions: expressions.map(isast) }; }
 export function spreadElement         (arg) { return { type: SpreadElement, argument: arg }; }
@@ -137,7 +137,7 @@ export function variableDeclaration   (kind, ...rest) {
     else {
         // otherwise, we assume it's a list of repeating id+init pairs
         if (rest.length % 2 !== 0)
-            throw new Error("variable declarations must have equal numbers of identifiers and initializers");
+            throw new Error('variable declarations must have equal numbers of identifiers and initializers');
         let decls = [];
         while (rest.length > 0) {
             decls.push(variableDeclarator(isast(rest.shift()), isnullableast(rest.shift())));
@@ -145,12 +145,12 @@ export function variableDeclaration   (kind, ...rest) {
 		return { type: VariableDeclaration, kind: kind, declarations: decls };
 	}
 };
-export function constDeclaration (...rest) { return variableDeclaration("const", ...rest); }
-export function letDeclaration   (...rest) { return variableDeclaration("let", ...rest); }
-export function varDeclaration   (...rest) { return variableDeclaration("var", ...rest); }
+export function constDeclaration (...rest) { return variableDeclaration('const', ...rest); }
+export function letDeclaration   (...rest) { return variableDeclaration('let', ...rest); }
+export function varDeclaration   (...rest) { return variableDeclaration('var', ...rest); }
 
 export function variableDeclarator (id, init = undefined) { return { type: VariableDeclarator, id: isast(id), init: init }; }
 export function whileStatement     (test, body) { return { type: WhileStatement, test: isast(test), body: isast(body) }; }
 
-export function undefinedLit () { return unaryExpression("void", literal(0)); }
+export function undefinedLit () { return unaryExpression('void', literal(0)); }
 export function nullLit      () { return literal(null); }

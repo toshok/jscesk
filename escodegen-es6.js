@@ -59,9 +59,7 @@ export let browser = false;
         directive,
         extra,
         parse,
-        sourceMap,
-        FORMAT_MINIFY,
-        FORMAT_DEFAULTS;
+        sourceMap;
 
     Syntax = {
         AssignmentExpression: 'AssignmentExpression',

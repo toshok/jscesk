@@ -2,7 +2,7 @@
 
 import * as esprima from   './esprima-es6';
 import * as b from         './ast-builder';
-import * as fs from        '@node-compat/fs';
+import * as fs from        'fs';
 
 import { dumpStatements, unimplemented, error, setDebug } from './utils';
 import { assignNext, wrap, CESKDone } from './ast';
@@ -65,6 +65,7 @@ function runcesk(name, program_text) {
 
 let args = process.argv.slice();
 args.shift(); // get rid of argv0
+args.shift(); // get rid of argv1
 
 if (args.length > 0 && args[0] == '-d') {
     args.shift(); // get rid of -d
@@ -72,7 +73,7 @@ if (args.length > 0 && args[0] == '-d') {
 }
     
 if (args.length === 0)
-    error("must specify test to run on command line, ex: ./jscesk.exe tests/func-call.js");
+    error('must specify test to run on command line, ex: ./jscesk.exe tests/func-call.js');
 
 let test_file = args[0];
 let test_contents = fs.readFileSync(test_file, 'utf-8');

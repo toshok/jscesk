@@ -3,17 +3,17 @@ import { debug, error } from './utils';
 // the state type that wraps up Stmt x Environment x Store x Kont
 export class State {
     constructor(stmt, fp, store, kont) {
-        if (!stmt || !stmt.type) error("State.stmt must be an ast node");
+        if (!stmt || !stmt.type) error('State.stmt must be an ast node');
         this.stmt = stmt;
         this.fp = fp;
         this.store = store;
         this.kont = kont;
     }
     next() {
-        let kont_stack = "";
+        let kont_stack = '';
         let k = this.kont;
         while (k) {
-            kont_stack += k.toString() + " ";
+            kont_stack += k.toString() + ' ';
             k = k.next;
         }
         

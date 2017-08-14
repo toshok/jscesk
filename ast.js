@@ -83,7 +83,7 @@ class CESKReturn extends CESKStatement {
     get body() { return this._body; }
 
     step(fp, store, kont) {
-        debug("CESKReturn.step");
+        debug('CESKReturn.step');
 
         let returnValue = es6.GetValue(this._argument.eval(fp, store), store);
         return kont.apply(returnValue, store);
@@ -98,7 +98,7 @@ class CESKProgram extends CESKStatement {
     get body() { return this._body; }
 
     step(fp, store, kont) {
-        debug("CESKProgram.step");
+        debug('CESKProgram.step');
         // easy - we just skip to the first statement inside the program
         return new State(this.nextStmt, fp, store, kont);
     }
@@ -106,10 +106,10 @@ class CESKProgram extends CESKStatement {
 
 class CESKLeaveScope extends CESKStatement {
     constructor() {
-        super(b.expressionStatement(b.callExpression(b.identifier("%leaveScope"), [])));
+        super(b.expressionStatement(b.callExpression(b.identifier('%leaveScope'), [])));
     }
     step(fp, store, kont) {
-        debug("CESKLeaveScope.step");
+        debug('CESKLeaveScope.step');
         return kont.leaveScope(store);
     }
 }
@@ -130,7 +130,7 @@ class CESKBlockStatement extends CESKStatement {
     get body() { return this._body; }
 
     step(fp, store, kont) {
-        debug("CESKBlockStatement.step");
+        debug('CESKBlockStatement.step');
         // easy - we just skip to the first statement inside the block
         // (or the first one afterward if the block is empty)
         let kont_ = kont;
@@ -144,10 +144,10 @@ class CESKBlockStatement extends CESKStatement {
 
 class CESKLeaveHandler extends CESKStatement {
     constructor() {
-        super(b.expressionStatement(b.callExpression(b.identifier("%leaveHandler"), [])));
+        super(b.expressionStatement(b.callExpression(b.identifier('%leaveHandler'), [])));
     }
     step(fp, store, kont) {
-        debug("CESKLeaveHandler.step");
+        debug('CESKLeaveHandler.step');
         return kont.leaveHandler(store);
     }
 }
@@ -168,12 +168,12 @@ class CESKTry extends CESKStatement {
     get finalizer() { return this._finalizer; }
 
     step(fp, store, kont) {
-        debug("CESKTry.step");
+        debug('CESKTry.step');
         let kont_ = kont;
         if (this._leave_handler_ins) {
-            debug("pushing handler kont");
+            debug('pushing handler kont');
             kont_ = new HandlerKont(this.handlers[0], fp, kont_);
-            debug("pushing leave scope kont");
+            debug('pushing leave scope kont');
             kont_ = new LeaveScopeKont(this._leave_handler_ins.nextStmt, fp, kont_);
         }
 
@@ -192,7 +192,7 @@ class CESKCatchClause extends CESKAst {
     get body() { return this._body; }
 
     step(fp, store, kont) {
-        unimplemented("CESKCatchClause.step");
+        unimplemented('CESKCatchClause.step');
     }
 }
 
@@ -243,7 +243,7 @@ function callFunc(callee, args, name, nextStmt, fp, store, kont) {
     }
     else {
         debug(callee_.toString());
-        return error("callee is not a function");
+        return error('callee is not a function');
     }
 }
     
@@ -256,7 +256,7 @@ class CESKVariableDeclaration extends CESKStatement {
     get kind() { return this._ast.kind; }
 
     step(fp, store, kont) {
-        debug("CESKVariableDeclaration.step");
+        debug('CESKVariableDeclaration.step');
         // our ANF pass has flattened declarations to a single declarator
 
         let name = this.declarations[0].name;
@@ -322,7 +322,7 @@ class CESKMemberExpression extends CESKExpression {
         let oref = this.object.eval(fp, store, kont);
         let oval = es6.GetValue(oref, store);
         if (!(oval instanceof CObject))
-            error("member expression with lhs not an object");
+            error('member expression with lhs not an object');
         return oval.get(this.property);
     }
 }
@@ -337,7 +337,7 @@ class CESKBinaryExpression extends CESKExpression {
     get left() { return this._left; }
     get right() { return this._right; }
     eval(fp, store, kont) {
-        debug("CESKBinaryExpression.eval");
+        debug('CESKBinaryExpression.eval');
         let lref = this._left.eval(fp, store, kont);
         let lval = es6.GetValue(lref, store);
         let rref = this._right.eval(fp, store, kont);
@@ -391,6 +391,7 @@ class CESKBinaryExpression extends CESKExpression {
             case '/': return new CNum(lnum.value / rnum.value);
             case '%': /*print(`${lnum.value} % ${rnum.value} = ${lnum.value % rnum.value}`);*/ return new CNum(lnum.value % rnum.value);
             }
+            break;
         }
         case '-': return new CNum(lval.value - rval.value);
         case '<': { 
@@ -471,7 +472,7 @@ class CESKLogicalExpression extends CESKExpression {
     get left() { return this._left; }
     get right() { return this._right; }
     eval(fp, store, kont) {
-        debug("CESKLogicalExpression.eval");
+        debug('CESKLogicalExpression.eval');
         let lval = es6.ToBoolean(es6.GetValue(this._left.eval(fp, store, kont), store));
         let rval = es6.ToBoolean(es6.GetValue(this._right.eval(fp, store, kont), store));
         switch (this.operator) {
@@ -490,7 +491,8 @@ class CESKAssignmentExpression extends CESKExpression {
     get left() { return this._left; }
     get right() { return this._right; }
     eval(fp, store, kont) {
-        debug("CESKAssignmentExpression.eval");
+        debug('CESKAssignmentExpression.eval');
+        // XXX(toshok) do something with this.op?
         let lref = this._left.eval(fp, store, kont);
 
         let rref = this._right.eval(fp, store, kont);
@@ -509,7 +511,7 @@ class CESKExpressionStatement extends CESKStatement {
     }
     get expression() { return this._expression; }
     step(fp, store, kont) {
-        debug("CESKExpressionStatement.step");
+        debug('CESKExpressionStatement.step');
         let val = es6.GetValue(this._expression.eval(fp, store, kont), store);
         if (val instanceof State)
             return val;
@@ -525,15 +527,15 @@ class CESKLiteral extends CESKExpression {
     get raw() { return this._ast.raw; }
 
     eval(fp, store, kont) {
-        debug("CESKLiteral.eval");
-        if (typeof(this._ast.value) === "number") {
+        debug('CESKLiteral.eval');
+        if (typeof(this._ast.value) === 'number') {
             return new CNum(this._ast.value);
-	}
-        else if (typeof(this._ast.value) === "string")
+        }
+        else if (typeof(this._ast.value) === 'string')
             return new CStr(this._ast.value);
-        else if (typeof(this._ast.value) === "boolean")
+        else if (typeof(this._ast.value) === 'boolean')
             return new CBool(this._ast.value);
-        return unimplemented("CESKLiteral.eval");
+        return unimplemented('CESKLiteral.eval');
     }
     toString() { return `CESKLiteral(${this.value})`; }
 }
@@ -547,7 +549,7 @@ class CESKCallExpression extends CESKExpression {
     get callee() { return this._callee; }
     get arguments() { return this._arguments; }
     eval(fp, store, kont) {
-        debug("CESKCallExpression.eval");
+        debug('CESKCallExpression.eval');
         // ANF should have ensured that this would be a simple identifier lookup, not a complex expression, and cannot throw.
         return callFunc(this._callee, this._arguments, undefined, this.nextStmt, fp, store, kont);
     }
@@ -560,7 +562,7 @@ class CESKObjectExpression extends CESKExpression {
     }
     get properties() { return this._properties; }
     eval(fp, store, kont) {
-        let rv = new CObject(fp.getOffset("%ObjectPrototype%"), store);
+        let rv = new CObject(fp.getOffset('%ObjectPrototype%'), store);
         // XXX properties
         return rv;
     }
@@ -573,7 +575,7 @@ class CESKArrayExpression extends CESKExpression {
     }
     get elements() { return this._elements; }
     eval(fp, store, kont) {
-        unimplemented("CESKArrayExpression.eval");
+        unimplemented('CESKArrayExpression.eval');
     }
 }
 
@@ -610,7 +612,7 @@ class CESKWhile extends CESKStatement {
     get test() { return this._test; }
     get body() { return this._body; }
     step(fp, store, kont) {
-        debug(`CESKWhile()`);
+        debug('CESKWhile()');
         let testValue = es6.ToBoolean(es6.GetValue(this._test.eval(fp, store), store));
         if (testValue.value) {
             return new State(this._body, fp, store, kont);
@@ -632,11 +634,11 @@ class CESKEmpty extends CESKStatement {
 
 export class CESKDone extends CESKStatement {
     constructor() {
-        super({ type: "Done" });
+        super({ type: 'Done' });
         this.done = true;
     }
     step(fp, store, kont) {
-        error("shouldn't reach here");
+        error('shouldn\'t reach here');
     }
 }
 
@@ -748,10 +750,10 @@ export function assignNext(stmt, next) {
         stmt._nextStmt = null;
     }
     else if (stmt.type === b.BreakStatement) {
-        unimplemented("we don't handle break/continue yet");
+        unimplemented('we don\'t handle break/continue yet');
     }
     else if (stmt.type === b.ContinueStatement) {
-        unimplemented("we don't handle break/continue yet");
+        unimplemented('we don\'t handle break/continue yet');
     }
     else if (stmt.type === b.TryStatement) {
         assignNext(stmt.handlers[0].body, next);

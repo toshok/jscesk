@@ -1,6 +1,5 @@
 import { error } from './utils';
 import { Pointer } from './pointer';
-import { CNull } from './concrete';
 
 export class Environment {
     constructor(parent = null) {
@@ -38,14 +37,14 @@ export class Environment {
     }
     toString() {
         let e = this;
-        let str = `Environment(`;
+        let str = 'Environment(';
         while (e) {
-            if (e != this) str += "\n------";
+            if (e != this) str += '\n------';
             for (let name in e._offsets) {
                 str += `\n   ${name} = ${this._offsets[name]}`;
             }
             e = e._parent;
         }
-        return str + ")";
+        return str + ')';
     }
 }
